@@ -547,6 +547,14 @@ The **Download Loxone Integration** button generates a
 - `TEMPLATE-SAMPLES-NEEDED.md` — exact exports still required from your Loxone Config version;
 - `SETUP.md` — step-by-step setup and official Loxone references.
 
+For Direct HTTP installations, each robot card also contains a collapsed
+**Ready-to-copy Loxone Config setup** guide. It shows the exact Virtual Input
+names and types, the authenticated Virtual Output connector address, and every
+supported `POST` command path for core controls, selected rooms, scenes and
+confirmed advanced capabilities. The API token is entered only in the current
+browser tab so the UI can assemble copy-ready fields; it is never read back
+from the bridge, persisted by the browser, logged, or added to an export.
+
 No MQTT username, password, Roborock session, token, local key, or device
 secret is exported. The archive is deliberately a configuration assistant,
 not an undocumented XML or `.LoxPLAN` file. Loxone documents a limit of 16

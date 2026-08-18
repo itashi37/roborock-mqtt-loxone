@@ -26,14 +26,14 @@ export function BatteryGauge({ value }: { value: number }) {
   </div>;
 }
 
-export function CopyButton({ value }: { value: string }) {
+export function CopyButton({ value, label = 'Copy value', disabled = false }: { value: string; label?: string; disabled?: boolean }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     await navigator.clipboard.writeText(value);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1600);
   };
-  return <button type="button" onClick={() => void copy()} className="touch-target inline-flex items-center justify-center rounded-lg border border-border p-2 hover:bg-accent" title="Copy topic" aria-label="Copy topic">
+  return <button type="button" onClick={() => void copy()} disabled={disabled} className="touch-target inline-flex items-center justify-center rounded-lg border border-border p-2 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40" title={label} aria-label={label}>
     {copied ? <Check className="h-4 w-4 text-green-500" /> : <Clipboard className="h-4 w-4" />}
   </button>;
 }

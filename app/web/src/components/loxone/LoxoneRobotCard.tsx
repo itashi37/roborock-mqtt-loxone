@@ -7,6 +7,7 @@ import { ScenesPanel } from './ScenesPanel';
 import { MqttTopicsPanel } from './MqttTopicsPanel';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
 import { AdvancedDiagnosticsPanel } from './AdvancedDiagnosticsPanel';
+import { DirectHttpSetupPanel } from './DirectHttpSetupPanel';
 
 interface Props {
   robot: LoxoneRobot;
@@ -25,6 +26,8 @@ interface Props {
   onCommand: (key: string, command: string, success: string) => void;
   onTestScene: (scene: LoxoneScene) => void;
   onTestMQTT: () => void;
+  directAPIUsername: string;
+  directTokenConfigured: boolean;
 }
 
 export function LoxoneRobotCard(props: Props) {
@@ -62,6 +65,7 @@ export function LoxoneRobotCard(props: Props) {
       <Section title="Scenes" count={`${robot.scenes.length} scenes`}>
         <ScenesPanel slug={robot.slug} scenes={robot.scenes} activities={activities} selected={selected} busy={busy} onSelect={props.onSelectScene} onTest={props.onTestScene} />
       </Section>
+      <Section title="Direct HTTP configuration" description="Copy-ready Loxone Config fields, kept in one compact guide."><DirectHttpSetupPanel robot={robot} apiUsername={props.directAPIUsername} tokenConfigured={props.directTokenConfigured} /></Section>
       <Section title="MQTT topics" description="The standard integration consumes two subscriptions per selected robot."><MqttTopicsPanel topics={robot.topics} /></Section>
       <Section title="Diagnostics"><DiagnosticsPanel core={core} activity={lastActivity} lastCommand={lastCommand} activities={activities} mqttTest={mqttTest} testing={busy.has('mqtt-test')} onTestMQTT={props.onTestMQTT} /></Section>
       <Section title="Capabilities & advanced controls" description="Advanced/Admin controls appear only after evidence from this robot confirms support."><AdvancedDiagnosticsPanel slug={robot.slug} initialCapabilities={robot.capabilities} busy={busy} onCommand={props.onCommand} /></Section>

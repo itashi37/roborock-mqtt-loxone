@@ -60,6 +60,8 @@ type loxoneIntegrationResponse struct {
 	Warning               string                        `json:"warning,omitempty"`
 	MQTTTest              *LoxoneMQTTTestStatus         `json:"mqtt_test,omitempty"`
 	DirectEnabled         bool                          `json:"direct_enabled"`
+	DirectAPIUsername     string                        `json:"direct_api_username,omitempty"`
+	DirectTokenConfigured bool                          `json:"direct_token_configured"`
 	DirectDiagnostics     *loxonedirect.SyncDiagnostics `json:"direct_diagnostics,omitempty"`
 	Robots                []loxoneRobotResponse         `json:"robots"`
 	Fleet                 *roborock.FleetHealth         `json:"fleet,omitempty"`
@@ -80,6 +82,8 @@ type loxoneRobotResponse struct {
 	Diagnostics   roborock.LoxoneDiagnostics  `json:"diagnostics"`
 	Capabilities  roborock.DeviceCapabilities `json:"capabilities"`
 	Health        roborock.DeviceHealth       `json:"health"`
+	DirectInputs  []loxoneDirectInput         `json:"direct_inputs,omitempty"`
+	DirectOutputs []loxoneDirectOutput        `json:"direct_outputs,omitempty"`
 }
 
 type loxoneTopics struct {
@@ -121,6 +125,8 @@ func (ws *WebServer) buildLoxoneIntegration() (loxoneIntegrationResponse, error)
 		Upstream:              "mqtt-home/roborock-mqtt",
 		Enabled:               cfg.Loxone.Enabled,
 		DirectEnabled:         cfg.Loxone.Direct.Enabled,
+		DirectAPIUsername:     cfg.Loxone.Direct.APIUsername,
+		DirectTokenConfigured: cfg.Loxone.Direct.APIToken != "",
 		BridgeStarted:         ws.deviceManager != nil,
 		Topic:                 cfg.Loxone.Topic,
 		SubscriptionLimit:     loxoneSubscriptionLimit,
@@ -210,6 +216,9 @@ func (ws *WebServer) buildLoxoneRobot(device *roborock.ManagedDevice) loxoneRobo
 	sort.Slice(robot.Scenes, func(i, j int) bool {
 		return strings.ToLower(robot.Scenes[i].Name) < strings.ToLower(robot.Scenes[j].Name)
 	})
+	if robot.DirectEnabled {
+		robot.DirectInputs, robot.DirectOutputs = ws.directExportPlan(robot, robot.Rooms, robot.Scenes)
+	}
 	return robot
 }
 

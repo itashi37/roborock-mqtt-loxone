@@ -91,6 +91,8 @@ export interface LoxoneRobot {
   diagnostics: LoxoneDiagnostics;
   capabilities: RobotCapabilities;
   health: DeviceHealth;
+  direct_inputs?: LoxoneDirectInput[];
+  direct_outputs?: LoxoneDirectOutput[];
 }
 
 export interface DeviceHealth {
@@ -143,6 +145,20 @@ export interface DirectDiagnostics {
   inputs: DirectInputDiagnostic[];
 }
 
+export interface LoxoneDirectInput {
+  name: string;
+  field: string;
+  kind: 'digital' | 'analog' | 'text';
+}
+
+export interface LoxoneDirectOutput {
+  name: string;
+  method: 'POST';
+  path: string;
+  command: string;
+  level: 'safe' | 'advanced';
+}
+
 export interface LoxoneIntegration {
   project: string;
   upstream: string;
@@ -156,6 +172,8 @@ export interface LoxoneIntegration {
   warning?: string;
   mqtt_test?: LoxoneMQTTTest;
   direct_enabled: boolean;
+  direct_api_username?: string;
+  direct_token_configured: boolean;
   direct_diagnostics?: DirectDiagnostics;
   robots: LoxoneRobot[];
   fleet?: FleetHealth;

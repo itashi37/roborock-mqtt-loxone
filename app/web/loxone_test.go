@@ -127,6 +127,16 @@ func TestDirectExportPlanContainsNoCredentialsAndNoMQTTSubscriptions(t *testing.
 	if pack.SubscriptionsRequired != 0 || len(pack.Robots) != 1 || len(pack.Robots[0].DirectInputs) < 15 || len(pack.Robots[0].DirectOutputs) != 3 {
 		t.Fatalf("unexpected Direct plan: %+v", pack)
 	}
+	integration, err := server.buildLoxoneIntegration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !integration.DirectTokenConfigured || integration.DirectAPIUsername != "loxone" || len(integration.Robots) != 1 {
+		t.Fatalf("integration lacks sanitized Direct setup metadata: %+v", integration)
+	}
+	if len(integration.Robots[0].DirectInputs) < 15 || len(integration.Robots[0].DirectOutputs) != 3 {
+		t.Fatalf("copy-ready Direct plan missing from integration UI response: %+v", integration.Robots[0])
+	}
 	serialized, _ := json.Marshal(pack)
 	for _, secret := range []string{"secret-user", "secret-password", "secret-token", "192.168.1.10"} {
 		if strings.Contains(string(serialized), secret) {

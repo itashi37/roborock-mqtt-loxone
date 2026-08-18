@@ -74,3 +74,31 @@ export function formatActivity(activity: LoxoneActivity): string {
   if (activity.type === 'command') return `${activity.command ?? 'command'} · ${activity.state ?? 'unknown'}${activity.error ? ` · ${activity.error}` : ''}`;
   return `${activity.event ?? 'event'}${activity.room_name ? ` · ${activity.room_name}` : ''}${activity.error_text ? ` · ${activity.error_text}` : ''}`;
 }
+
+export function normalizeBridgeAddress(value: string): string {
+  const candidate = value.trim();
+  if (!candidate) throw new Error('Enter the bridge address reachable from the Miniserver.');
+  const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(candidate);
+  const parsed = new URL(hasScheme ? candidate : `http://${candidate}`);
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('The bridge address must use HTTP or HTTPS.');
+  if (!parsed.hostname) throw new Error('The bridge address is invalid.');
+  parsed.username = '';
+  parsed.password = '';
+  parsed.pathname = '';
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.origin;
+}
+
+export function directConnectorAddress(baseAddress: string, username: string, token: string): string {
+  const parsed = new URL(normalizeBridgeAddress(baseAddress));
+  if (username.trim() && token) {
+    parsed.username = username.trim();
+    parsed.password = token;
+  }
+  return parsed.toString().replace(/\/$/, '');
+}
+
+export function directCommandURL(connectorAddress: string, path: string): string {
+  return `${connectorAddress.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
+}

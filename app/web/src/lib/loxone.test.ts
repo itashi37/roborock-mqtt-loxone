@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultLoxoneSelection, latestActivity, latestSceneActivity, mergeActivities, subscriptionBudget, updateSelectedID, validateRoomDrafts } from './loxone';
+import { defaultLoxoneSelection, directCommandURL, directConnectorAddress, latestActivity, latestSceneActivity, mergeActivities, normalizeBridgeAddress, subscriptionBudget, updateSelectedID, validateRoomDrafts } from './loxone';
 import type { LoxoneIntegration, LoxoneRoom } from '@/types/loxone';
 
 describe('Loxone integration helpers', () => {
@@ -53,5 +53,13 @@ describe('Loxone integration helpers', () => {
     } as unknown as LoxoneIntegration;
     expect(latestActivity(integration)?.slug).toBe('upper');
     expect(latestSceneActivity({ id: 101, name: 'Dinner', command: 'scene_id:101' }, [sceneActivity])).toEqual(sceneActivity);
+  });
+
+  it('builds copy-ready authenticated Direct HTTP fields', () => {
+    expect(normalizeBridgeAddress(' 192.168.1.20:8080/loxone ')).toBe('http://192.168.1.20:8080');
+    const connector = directConnectorAddress('https://bridge.local:8443/path', 'loxone', 'abc 123');
+    expect(connector).toBe('https://loxone:abc%20123@bridge.local:8443');
+    expect(directCommandURL(connector, '/api/loxone/direct/v1/devices/vacuum/commands/start')).toBe('https://loxone:abc%20123@bridge.local:8443/api/loxone/direct/v1/devices/vacuum/commands/start');
+    expect(() => normalizeBridgeAddress('ftp://bridge.local')).toThrow('HTTP or HTTPS');
   });
 });
