@@ -27,7 +27,6 @@ RUN go mod download
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o roborock-mqtt-loxone .
-RUN mkdir -p /data-dir
 
 # Final stage
 FROM gcr.io/distroless/static:nonroot
@@ -36,7 +35,7 @@ WORKDIR /
 
 COPY --from=backend-builder /app/roborock-mqtt-loxone /roborock-mqtt-loxone
 COPY --from=frontend-builder /app/web/dist /web/dist
-COPY --from=backend-builder --chown=nonroot:nonroot /data-dir /var/lib/roborock-mqtt-loxone
+COPY --chown=nonroot:nonroot docker/data /var/lib/roborock-mqtt-loxone
 
 VOLUME ["/var/lib/roborock-mqtt-loxone"]
 EXPOSE 8080

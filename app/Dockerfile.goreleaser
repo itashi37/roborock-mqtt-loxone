@@ -4,6 +4,7 @@ WORKDIR /
 
 COPY roborock-mqtt-loxone /roborock-mqtt-loxone
 COPY web/dist /web/dist
+COPY --chown=nonroot:nonroot docker/data /var/lib/roborock-mqtt-loxone
 
 VOLUME ["/var/lib/roborock-mqtt-loxone"]
 EXPOSE 8080

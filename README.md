@@ -28,13 +28,12 @@ additive Loxone contract. Existing upstream MQTT topics remain available.
 
 ### Docker Compose (recommended)
 
-A fresh writable data directory is enough. The container creates a minimal
-`config.json`, then the browser wizard stores the integration settings.
+A fresh Docker named volume is created automatically. The container creates a
+minimal `config.json`, then the browser wizard stores the integration settings.
 
 ```bash
 git clone https://github.com/itashi37/roborock-mqtt-loxone.git
 cd roborock-mqtt-loxone
-mkdir -p data
 docker compose up -d --build
 ```
 

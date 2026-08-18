@@ -11,7 +11,7 @@ services:
     ports:
       - "${ROBOROCK_WEB_PORT:-8080}:8080"
     volumes:
-      - "${ROBOROCK_DATA_DIR:-./data}:/var/lib/roborock-mqtt-loxone"
+      - "${ROBOROCK_DATA_DIR:-roborock-data}:/var/lib/roborock-mqtt-loxone"
     environment:
       TZ: "${TZ:-Europe/Paris}"
     networks:
@@ -35,5 +35,6 @@ networks:
   roborock:
 
 volumes:
+  roborock-data:
   mosquitto-data:
   mosquitto-log:
