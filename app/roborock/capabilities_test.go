@@ -1,6 +1,8 @@
 package roborock
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -9,6 +11,24 @@ func TestCapabilitiesRemainUnknownWithoutEvidence(t *testing.T) {
 	capabilities := NewCapabilityStore().Ensure("robot", time.Unix(1, 0))
 	if capabilities.Locate.Supported != nil || capabilities.DockEmpty.Supported != nil || capabilities.MopWash.Supported != nil {
 		t.Fatal("unverified advanced capabilities must remain unknown")
+	}
+}
+
+func TestCapabilitiesPersistWithoutSecrets(t *testing.T) {
+	dir := t.TempDir()
+	store := NewCapabilityStore(dir)
+	store.ObserveAdvancedDiagnostics("robot", AdvancedDiagnostics{Fields: map[string]any{"support_find_me": true}}, time.Unix(10, 0))
+	reloaded := NewCapabilityStore(dir).Get("robot")
+	if reloaded.Locate.Supported == nil || !*reloaded.Locate.Supported {
+		t.Fatalf("capability was not restored: %+v", reloaded)
+	}
+	path := filepath.Join(dir, "device-capabilities.json")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("permissions = %o", info.Mode().Perm())
 	}
 }
 

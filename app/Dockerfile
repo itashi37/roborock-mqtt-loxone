@@ -27,6 +27,7 @@ RUN go mod download
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o roborock-mqtt-loxone .
+RUN mkdir -p /data-dir
 
 # Final stage
 FROM gcr.io/distroless/static:nonroot
@@ -35,6 +36,11 @@ WORKDIR /
 
 COPY --from=backend-builder /app/roborock-mqtt-loxone /roborock-mqtt-loxone
 COPY --from=frontend-builder /app/web/dist /web/dist
+COPY --from=backend-builder --chown=nonroot:nonroot /data-dir /var/lib/roborock-mqtt-loxone
+
+VOLUME ["/var/lib/roborock-mqtt-loxone"]
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=6s --start-period=30s --retries=3 CMD ["/roborock-mqtt-loxone", "--healthcheck", "http://127.0.0.1:8080/api/health"]
 
 USER nonroot:nonroot
 

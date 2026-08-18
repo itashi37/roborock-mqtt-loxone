@@ -1,0 +1,39 @@
+name: roborock-mqtt-loxone
+
+services:
+  bridge:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    image: roborock-mqtt-loxone:local
+    container_name: roborock-mqtt-loxone
+    restart: unless-stopped
+    ports:
+      - "${ROBOROCK_WEB_PORT:-8080}:8080"
+    volumes:
+      - "${ROBOROCK_DATA_DIR:-./data}:/var/lib/roborock-mqtt-loxone"
+    environment:
+      TZ: "${TZ:-Europe/Paris}"
+    networks:
+      - roborock
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: roborock-mqtt-loxone-mosquitto
+    profiles: ["mqtt"]
+    restart: unless-stopped
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+    volumes:
+      - ./deploy/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+    networks:
+      - roborock
+
+networks:
+  roborock:
+
+volumes:
+  mosquitto-data:
+  mosquitto-log:

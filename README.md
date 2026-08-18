@@ -21,48 +21,61 @@ additive Loxone contract. Existing upstream MQTT topics remain available.
 - Reliable command lifecycle and robot events
 - Loxone Integration web page with room-name overrides and diagnostics
 - Safe downloadable Loxone setup pack generated from detected robots
+- Browser-first setup for MQTT, Direct HTTP, or Both
+- Capability-aware dock controls and fleet health diagnostics
 
 ## Quick Start
 
-### Docker
+### Docker Compose (recommended)
 
-Clone the dedicated repository and build the image locally:
+A fresh writable data directory is enough. The container creates a minimal
+`config.json`, then the browser wizard stores the integration settings.
 
 ```bash
 git clone https://github.com/itashi37/roborock-mqtt-loxone.git
 cd roborock-mqtt-loxone
-docker build -t roborock-mqtt-loxone:local ./app
-docker run -d --name roborock-mqtt-loxone \
-  --restart unless-stopped \
-  -v /path/to/config:/var/lib/roborock-mqtt-loxone \
-  -p 8080:8080 \
-  roborock-mqtt-loxone:local
+mkdir -p data
+docker compose up -d --build
 ```
 
-The mounted directory must contain `config.json`. Application sessions,
-schedules, and Loxone room-name overrides are stored alongside it.
+Open `http://NAS-IP:8080`. This baseline starts only the bridge and supports
+Direct Loxone without Mosquitto. For MQTT or Both with the bundled broker:
 
-### Synology update
+```bash
+docker compose --profile mqtt up -d --build
+```
 
-When the repository is stored in
-`/volume1/docker/roborock-mqtt-loxone/source`, rebuild and replace the dedicated
-container with:
+Use `tcp://mosquitto:1883` in the wizard. The sample broker permits anonymous
+LAN access for first tests; add Mosquitto authentication or use an existing
+secured broker before exposing port 1883 outside a trusted network.
+
+- Direct: bridge only; no local broker dependency.
+- MQTT: enable the `mqtt` profile or configure an existing broker.
+- Both: enable both transports; commands still pass through one coordinator.
+
+### Synology Container Manager
+
+Create a writable data directory for the image's non-root UID/GID, clone the
+repository into `source`, then start the Compose project:
+
+```bash
+mkdir -p /volume1/docker/roborock-mqtt-loxone/data
+sudo chown -R 65532:65532 /volume1/docker/roborock-mqtt-loxone/data
+cd /volume1/docker/roborock-mqtt-loxone/source
+ROBOROCK_DATA_DIR=/volume1/docker/roborock-mqtt-loxone/data docker compose up -d --build
+```
+
+Container Manager can import `compose.yaml` as a Project. Put
+`ROBOROCK_DATA_DIR=/volume1/docker/roborock-mqtt-loxone/data` in `.env`. For an
+update that preserves all state:
 
 ```bash
 cd /volume1/docker/roborock-mqtt-loxone/source
 git pull --ff-only origin main
-docker build -t roborock-mqtt-loxone:local ./app
-docker stop roborock-mqtt-loxone
-docker rm roborock-mqtt-loxone
-docker run -d --name roborock-mqtt-loxone \
-  --restart unless-stopped \
-  -v /volume1/docker/roborock-mqtt-loxone/config:/var/lib/roborock-mqtt-loxone \
-  -p 8080:8080 \
-  roborock-mqtt-loxone:local
+ROBOROCK_DATA_DIR=/volume1/docker/roborock-mqtt-loxone/data docker compose up -d --build
 ```
 
-This deployment is independent from any existing upstream
-`roborock-mqtt` container.
+This deployment is independent from any existing upstream container.
 
 ### From Source
 
@@ -75,7 +88,8 @@ This builds the frontend, builds the backend, and starts the server using `produ
 
 ## Configuration
 
-Create a `config.json` file:
+The Setup Wizard is the normal configuration path. For unattended/provisioned
+installs, the equivalent `config.json` structure is:
 
 ```json
 {
@@ -144,8 +158,8 @@ Virtual Inputs using the documented `/dev/sps/io/<input>/<value>` Web Service.
 The default names follow `RR_<slug>_<field>` and can be overridden per robot
 with `loxone.direct.inputs`. Failed values are retried without blocking
 Roborock polling; `POST /api/loxone/direct/resend` queues a full resync. Dock
-service fields are intentionally not sent until their model capabilities and
-status values have been verified.
+service fields are added only when that robot actually reports them. Capability
+detection uses status/feature evidence, never a commercial model-name guess.
 
 ### Direct Loxone command API
 
@@ -176,6 +190,13 @@ Virtual Output adapters:
 /commands/fan/{mode}
 /commands/mop/{mode}
 /commands/water/{level}
+/commands/stop
+/commands/empty_dustbin
+/commands/stop_emptying
+/commands/wash_mop
+/commands/stop_washing
+/commands/dry_mop
+/commands/stop_drying
 ```
 
 All routes enter the same coordinator as MQTT and the Web UI. A successful
@@ -249,6 +270,11 @@ The application stores persistent state in the config file's parent directory:
 ```
 config-dir/
   config.json
+  integration-settings.json   # UI settings and write-only credentials (0600)
+  device-slugs.json           # stable Roborock DUID to slug mapping
+  device-capabilities.json    # evidence-based capability cache
+  loxone-room-overrides.json
+  mqtt-retained-topics.json
   .session/             # Roborock session data
   schedules/
     not-at-home.json    # Global not-at-home toggle state
@@ -257,7 +283,28 @@ config-dir/
 
 In Kubernetes, mount this directory as a persistent volume.
 
-The container reads `/var/lib/roborock-mqtt-loxone/config.json` by default.
+The container reads `/var/lib/roborock-mqtt-loxone/config.json` by default. On
+a fresh writable volume it creates this file automatically. Back up the entire
+directory, not only `config.json`:
+
+```bash
+docker compose stop bridge
+tar -C /volume1/docker/roborock-mqtt-loxone -czf roborock-mqtt-loxone-backup.tgz data
+docker compose start bridge
+```
+
+### Migration from the current fork installation
+
+1. Stop the old container and back up its whole mounted config/data directory.
+2. Copy that directory to the new `ROBOROCK_DATA_DIR`; do not copy only the JSON config.
+3. Ensure UID/GID `65532` has read/write access.
+4. Start the new bridge with `docker compose up -d --build`.
+5. Existing configurations without `mqtt.enabled` keep MQTT enabled for compatibility.
+6. Open `/setup`, choose MQTT, Direct, or Both, save, then verify `/loxone` health.
+7. Keep the old container stopped until state, commands, room mappings, and scenes are verified.
+
+The updater never deletes the Roborock session, stable slugs, overrides,
+integration credentials, API token, schedules, or capability cache.
 
 ## MQTT Topics
 
@@ -526,12 +573,16 @@ make docker
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/health` | Health check |
+| `GET` | `/api/fleet/health` | Fleet health, latency and polling backoff |
+| `GET` | `/api/setup/status` | Sanitized setup/integration status |
+| `PUT` | `/api/setup/settings` | Persist and live-apply integration settings |
 | `GET` | `/api/auth/status` | Authentication status |
 | `POST` | `/api/auth/request-code` | Request verification code |
 | `POST` | `/api/auth/login` | Login with code |
 | `POST` | `/api/auth/logout` | Logout |
 | `GET` | `/api/devices` | List devices |
 | `GET` | `/api/devices/{slug}/status` | Device status |
+| `GET` | `/api/devices/{slug}/advanced-diagnostics` | Sanitized capability diagnostic |
 | `POST` | `/api/devices/{slug}/start` | Start cleaning |
 | `POST` | `/api/devices/{slug}/pause` | Pause cleaning |
 | `POST` | `/api/devices/{slug}/dock` | Return to dock |

@@ -5,6 +5,10 @@ WORKDIR /
 COPY roborock-mqtt-loxone /roborock-mqtt-loxone
 COPY web/dist /web/dist
 
+VOLUME ["/var/lib/roborock-mqtt-loxone"]
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=6s --start-period=30s --retries=3 CMD ["/roborock-mqtt-loxone", "--healthcheck", "http://127.0.0.1:8080/api/health"]
+
 USER nonroot:nonroot
 
 ENTRYPOINT ["/roborock-mqtt-loxone", "/var/lib/roborock-mqtt-loxone/config.json"]

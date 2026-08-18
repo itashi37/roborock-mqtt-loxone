@@ -77,6 +77,35 @@ func TestRuntimeSettingsPersistWithOwnerOnlyPermissions(t *testing.T) {
 	}
 }
 
+func TestEnsureConfigFileCreatesDirectReadyBrowserFirstConfig(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "nested", "config.json")
+	if err := EnsureConfigFile(file); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("permissions = %o", info.Mode().Perm())
+	}
+	loaded, err := LoadConfig(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.MQTT.IsEnabled() || loaded.Web.Port != 8080 || SetupComplete() {
+		t.Fatalf("unexpected first-start config: %+v", loaded)
+	}
+	original, _ := os.ReadFile(file)
+	if err := EnsureConfigFile(file); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(file)
+	if string(after) != string(original) {
+		t.Fatal("existing config was modified")
+	}
+}
+
 func TestLoadConfigCanDisableLocalMQTT(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "config.json")
 	data := []byte(`{

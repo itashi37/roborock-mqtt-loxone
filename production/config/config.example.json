@@ -1,14 +1,15 @@
 {
   "mqtt": {
-    "url": "tcp://localhost:1883",
+    "enabled": false,
+    "url": "tcp://mosquitto:1883",
     "topic": "home/roborock",
     "qos": 2,
     "retain": true
   },
   "roborock": {
-    "username": "your-email@example.com",
-    "password": "your-password",
-    "client_id": "<client-id>",
+    "username": "",
+    "password": "",
+    "client_id": "",
     "base_url": "https://euiot.roborock.com",
     "polling_interval": 30,
     "schedules": {
@@ -32,7 +33,16 @@
     "enabled": false,
     "topic": "loxone/roborock",
     "command_debounce_ms": 2000,
-    "command_timeout_seconds": 90
+    "command_timeout_seconds": 90,
+    "direct": {
+      "enabled": false,
+      "scheme": "http",
+      "host": "",
+      "port": 80,
+      "input_prefix": "RR",
+      "allowed_cidrs": ["192.168.1.0/24"],
+      "allow_get_commands": false
+    }
   },
   "web": {
     "enabled": true,

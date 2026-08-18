@@ -773,7 +773,7 @@ func startBridge(restClient *roborock.Client) {
 	deviceManager = roborock.NewDeviceManager(restClient.GetLoginData(), restClient.GetDevices(), restClient, dataDir)
 	cleanupStaleRetainedTopics()
 	deviceStateStore = roborock.NewDeviceStateStore()
-	capabilityStore = roborock.NewCapabilityStore()
+	capabilityStore = roborock.NewCapabilityStore(dataDir)
 	commandCoordinator = roborock.NewCommandCoordinator(
 		time.Duration(cfg.Loxone.CommandDebounceMS)*time.Millisecond,
 		time.Duration(cfg.Loxone.CommandTimeoutSeconds)*time.Second,
@@ -918,6 +918,15 @@ func startBridge(restClient *roborock.Client) {
 }
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "--healthcheck" {
+		client := http.Client{Timeout: 5 * time.Second}
+		response, err := client.Get(os.Args[2])
+		if err != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
+			os.Exit(1)
+		}
+		_ = response.Body.Close()
+		return
+	}
 	logger.Init("info", logger.Logger())
 	logger.Info("roborock-mqtt-loxone", "version", version.Info())
 	initPprof()
@@ -929,6 +938,10 @@ func main() {
 
 	configFile := os.Args[1]
 	logger.Info("Configuration file", "path", configFile)
+	if err := config.EnsureConfigFile(configFile); err != nil {
+		logger.Error("Failed to initialize configuration", "error", err)
+		return
+	}
 
 	cfg, err := config.LoadConfig(configFile)
 	if err != nil {

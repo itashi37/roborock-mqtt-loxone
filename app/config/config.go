@@ -19,6 +19,43 @@ var envVariablePattern = regexp.MustCompile(`\$\{([^}]+)\}`)
 
 const runtimeSettingsFile = "integration-settings.json"
 
+// EnsureConfigFile creates the minimal browser-first configuration used by a
+// fresh Docker volume. Existing files are never changed.
+func EnsureConfigFile(file string) error {
+	if _, err := os.Stat(file); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
+		return fmt.Errorf("create data directory: %w", err)
+	}
+	minimal := Config{
+		MQTT:     MQTTConfig{Enabled: boolConfig(false), Topic: "home/roborock", QoS: 1, Retain: true},
+		Roborock: RoborockConfig{BaseURL: "https://euiot.roborock.com", PollingInterval: 30},
+		Loxone:   LoxoneConfig{Topic: "loxone/roborock"},
+		Web:      WebConfig{Enabled: true, Port: 8080}, LogLevel: "info",
+	}
+	data, err := json.MarshalIndent(minimal, "", "  ")
+	if err != nil {
+		return err
+	}
+	handle, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		if os.IsExist(err) {
+			return nil
+		}
+		return fmt.Errorf("create initial config: %w", err)
+	}
+	defer handle.Close()
+	if _, err := handle.Write(append(data, '\n')); err != nil {
+		return fmt.Errorf("write initial config: %w", err)
+	}
+	return nil
+}
+
+func boolConfig(value bool) *bool { return &value }
+
 type RuntimeSettings struct {
 	MQTT             MQTTConfig   `json:"mqtt"`
 	Loxone           LoxoneConfig `json:"loxone"`

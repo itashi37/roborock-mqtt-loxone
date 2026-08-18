@@ -1,7 +1,11 @@
 package roborock
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -68,10 +72,24 @@ func InitialDeviceCapabilities(now time.Time) DeviceCapabilities {
 type CapabilityStore struct {
 	mu      sync.RWMutex
 	devices map[string]DeviceCapabilities
+	path    string
 }
 
-func NewCapabilityStore() *CapabilityStore {
-	return &CapabilityStore{devices: make(map[string]DeviceCapabilities)}
+func NewCapabilityStore(dataDir ...string) *CapabilityStore {
+	store := &CapabilityStore{devices: make(map[string]DeviceCapabilities)}
+	if len(dataDir) > 0 && strings.TrimSpace(dataDir[0]) != "" {
+		store.path = filepath.Join(dataDir[0], "device-capabilities.json")
+		if data, err := os.ReadFile(store.path); err == nil {
+			var cache struct {
+				Schema  int                           `json:"schema"`
+				Devices map[string]DeviceCapabilities `json:"devices"`
+			}
+			if json.Unmarshal(data, &cache) == nil && cache.Schema == 1 && cache.Devices != nil {
+				store.devices = cache.Devices
+			}
+		}
+	}
+	return store
 }
 
 func (s *CapabilityStore) Ensure(slug string, now time.Time) DeviceCapabilities {
@@ -81,6 +99,7 @@ func (s *CapabilityStore) Ensure(slug string, now time.Time) DeviceCapabilities 
 	if !ok {
 		capabilities = InitialDeviceCapabilities(now)
 		s.devices[slug] = capabilities
+		_ = s.saveLocked()
 	}
 	return capabilities
 }
@@ -92,6 +111,7 @@ func (s *CapabilityStore) UpdateInventory(slug string, mappings []RoomMapping, r
 	if !ok {
 		capabilities = InitialDeviceCapabilities(now)
 	}
+	previous := capabilities
 	if roomsKnown {
 		capabilities.Rooms = observedCapability(now, "get_room_mapping")
 		if len(mappings) == 0 {
@@ -109,6 +129,9 @@ func (s *CapabilityStore) UpdateInventory(slug string, mappings []RoomMapping, r
 		}
 	}
 	s.devices[slug] = capabilities
+	if !semanticCapabilitiesEqual(previous, capabilities) {
+		_ = s.saveLocked()
+	}
 	return capabilities
 }
 
@@ -119,6 +142,7 @@ func (s *CapabilityStore) ObserveStatus(slug string, status *PublishedStatus, no
 	if !ok {
 		capabilities = InitialDeviceCapabilities(now)
 	}
+	previous := capabilities
 	if status != nil {
 		if value := strings.TrimSpace(status.FanSpeed); value != "" && value != "unknown" {
 			capabilities.Fan = mergeObservedValue(capabilities.Fan, now, "get_status.fan_power", value)
@@ -147,6 +171,9 @@ func (s *CapabilityStore) ObserveStatus(slug string, status *PublishedStatus, no
 		}
 	}
 	s.devices[slug] = capabilities
+	if !semanticCapabilitiesEqual(previous, capabilities) {
+		_ = s.saveLocked()
+	}
 	return capabilities
 }
 
@@ -160,6 +187,7 @@ func (s *CapabilityStore) ObserveAdvancedDiagnostics(slug string, diagnostics Ad
 	if !ok {
 		capabilities = InitialDeviceCapabilities(now)
 	}
+	previous := capabilities
 	for name, value := range diagnostics.Fields {
 		supported, explicit := explicitFeatureBoolean(value)
 		if !explicit {
@@ -180,7 +208,45 @@ func (s *CapabilityStore) ObserveAdvancedDiagnostics(slug string, diagnostics Ad
 		}
 	}
 	s.devices[slug] = capabilities
+	if !semanticCapabilitiesEqual(previous, capabilities) {
+		_ = s.saveLocked()
+	}
 	return capabilities
+}
+
+func (s *CapabilityStore) saveLocked() error {
+	if s.path == "" {
+		return nil
+	}
+	data, err := json.MarshalIndent(struct {
+		Schema  int                           `json:"schema"`
+		Devices map[string]DeviceCapabilities `json:"devices"`
+	}{Schema: 1, Devices: s.devices}, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
+		return err
+	}
+	temporary := s.path + ".tmp"
+	if err := os.WriteFile(temporary, append(data, '\n'), 0600); err != nil {
+		return err
+	}
+	return os.Rename(temporary, s.path)
+}
+
+func semanticCapabilitiesEqual(left, right DeviceCapabilities) bool {
+	clearChecked := func(value *DeviceCapabilities) {
+		for _, capability := range []*Capability{
+			&value.Rooms, &value.Scenes, &value.Fan, &value.Mop, &value.Water,
+			&value.Locate, &value.Dock, &value.DockEmpty, &value.MopWash, &value.MopDry, &value.Stop,
+		} {
+			capability.LastChecked = time.Time{}
+		}
+	}
+	clearChecked(&left)
+	clearChecked(&right)
+	return reflect.DeepEqual(left, right)
 }
 
 func reportedCapability(now time.Time, source string, supported bool) Capability {
