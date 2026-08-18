@@ -76,7 +76,8 @@ export function LoxoneIntegrationPage({ liveActivities, liveStatuses, liveAvaila
     } : current);
   }, [liveActivities]);
 
-  const budget = useMemo(() => subscriptionBudget(selection.length, integration?.subscriptions_per_robot ?? 2, integration?.subscription_limit ?? 16), [selection.length, integration]);
+  const mqttSelectedCount = useMemo(() => selection.filter(item => integration?.robots.find(robot => robot.slug === item.slug)?.mqtt_enabled).length, [selection, integration]);
+  const budget = useMemo(() => subscriptionBudget(mqttSelectedCount, integration?.subscriptions_per_robot ?? 2, integration?.subscription_limit ?? 16), [mqttSelectedCount, integration]);
   const latest = useMemo(() => integration ? latestActivity(integration) : undefined, [integration]);
   const run = async (key: string, action: () => Promise<void>, success: string) => {
     setBusyKey(key, true);
@@ -123,7 +124,7 @@ export function LoxoneIntegrationPage({ liveActivities, liveStatuses, liveAvaila
       const activities = robot.diagnostics.recent ?? [];
       return <LoxoneRobotCard key={robot.slug} robot={robot} core={core} online={online} selected={selected} drafts={drafts} activities={activities} mqttTest={integration.mqtt_test} busy={busy} onDraft={(id, value) => setRoomDrafts(current => ({ ...current, [`${robot.slug}:${id}`]: value }))} onSaveRoom={id => saveRoom(robot.slug, id)} onResetRoom={id => resetRoom(robot.slug, id)} onSelectRoom={(id, value) => setItemSelected(robot.slug, 'room_ids', id, value)} onSelectScene={(id, value) => setItemSelected(robot.slug, 'scene_ids', id, value)} onCommand={(key, command, success) => void run(key, () => testLoxoneCommand(robot.slug, command), success)} onTestScene={(scene: LoxoneScene) => void run(`scene:${robot.slug}:${scene.id}`, () => testLoxoneCommand(robot.slug, scene.command), `${scene.name} published. Waiting for /activity confirmation.`)} onTestMQTT={testMQTT} />;
     })}
-    <LoxoneExportPanel robots={integration.robots} selection={selection} perRobot={integration.subscriptions_per_robot} limit={budget.limit} required={budget.required} exceeds={budget.exceeds} exporting={busy.has('export')} onRobotSelected={setRobotSelected} onDownload={() => void run('export', () => downloadLoxoneIntegration(selection), 'Loxone integration pack downloaded.')} />
+    <LoxoneExportPanel robots={integration.robots} selection={selection} mqttRobotCount={mqttSelectedCount} templateStatus={integration.template_status} perRobot={integration.subscriptions_per_robot} limit={budget.limit} required={budget.required} exceeds={budget.exceeds} exporting={busy.has('export')} onRobotSelected={setRobotSelected} onDownload={() => void run('export', () => downloadLoxoneIntegration(selection), 'Loxone integration pack downloaded.')} />
     <footer className="pb-4 text-center text-xs text-muted-foreground">roborock-mqtt-loxone preserves attribution to mqtt-home/roborock-mqtt.</footer>
   </div><ToastRegion toast={toast} dismiss={() => setToast(null)} /></div>;
 }

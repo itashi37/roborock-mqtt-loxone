@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	appconfig "github.com/mqtt-home/roborock-mqtt/config"
+	"github.com/mqtt-home/roborock-mqtt/loxone/templates"
 	"github.com/mqtt-home/roborock-mqtt/roborock"
 )
 
@@ -30,8 +31,9 @@ func TestCreateLoxoneExportZIPContainsSafeDocumentedPack(t *testing.T) {
 		SubscriptionLimit:     16,
 		ExceedsLimit:          true,
 		Warning:               "WARNING: 18 exceeds 16",
+		TemplateStatus:        templates.StatusForCurrentBuild(),
 		Robots: []loxoneExportRobot{{
-			Slug: "vacuum",
+			Slug: "vacuum", MQTTEnabled: true,
 			Name: "=Formula Robot",
 			Topics: loxoneTopics{
 				Core: "loxone/roborock/vacuum/core", Activity: "loxone/roborock/vacuum/activity", Command: "loxone/roborock/vacuum/command",
@@ -61,7 +63,7 @@ func TestCreateLoxoneExportZIPContainsSafeDocumentedPack(t *testing.T) {
 		}
 		files[file.Name] = string(content)
 	}
-	for _, name := range []string{"integration.json", "topics.csv", "command-recognition.csv", "SETUP.md"} {
+	for _, name := range []string{"integration.json", "topics.csv", "command-recognition.csv", "direct-inputs.csv", "direct-outputs.csv", "template-status.json", "TEMPLATE-SAMPLES-NEEDED.md", "SETUP.md"} {
 		if _, ok := files[name]; !ok {
 			t.Fatalf("missing %s", name)
 		}
@@ -85,6 +87,50 @@ func TestCreateLoxoneExportZIPContainsSafeDocumentedPack(t *testing.T) {
 	for _, forbidden := range []string{"password", "username", "localKey", "token", "mqtt_url"} {
 		if strings.Contains(serialized, forbidden) {
 			t.Fatalf("export unexpectedly contains secret field %q", forbidden)
+		}
+	}
+}
+
+func TestTemplateStatusEndpointFailsClosed(t *testing.T) {
+	server := NewWebServer(nil, roborock.NewClient("", "", "", ""), nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/loxone/templates/status", nil)
+	response := httptest.NewRecorder()
+	server.router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"native_generation":false`) || !strings.Contains(response.Body.String(), "virtual_output_http_post") {
+		t.Fatalf("unexpected template status: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestDirectExportPlanContainsNoCredentialsAndNoMQTTSubscriptions(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "config.json")
+	data := []byte(`{
+		"mqtt":{"enabled":false,"topic":"home/roborock"},
+		"roborock":{"username":"test@example.com"},
+		"loxone":{"direct":{"enabled":true,"host":"192.168.1.10","username":"secret-user","password":"secret-password","api_token":"secret-token"}},
+		"web":{}
+	}`)
+	if err := os.WriteFile(file, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := appconfig.LoadConfig(file); err != nil {
+		t.Fatal(err)
+	}
+	client := roborock.NewClient("", "", "", "")
+	manager := roborock.NewDeviceManager(&roborock.LoginData{}, []roborock.DeviceInfo{{Name: "Robot", DID: "did-1"}}, client, dir)
+	server := NewWebServer(manager, client, nil)
+	server.SetLoxoneIntegration(&LoxoneDependencies{Core: roborock.NewLoxoneCoreStore(), Diagnostics: roborock.NewLoxoneDiagnosticStore(5), Capabilities: roborock.NewCapabilityStore()})
+	pack, err := server.buildLoxoneExport(loxoneExportRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pack.SubscriptionsRequired != 0 || len(pack.Robots) != 1 || len(pack.Robots[0].DirectInputs) < 15 || len(pack.Robots[0].DirectOutputs) != 3 {
+		t.Fatalf("unexpected Direct plan: %+v", pack)
+	}
+	serialized, _ := json.Marshal(pack)
+	for _, secret := range []string{"secret-user", "secret-password", "secret-token", "192.168.1.10"} {
+		if strings.Contains(string(serialized), secret) {
+			t.Fatalf("export leaked %q", secret)
 		}
 	}
 }

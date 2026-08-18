@@ -159,6 +159,12 @@ export interface LoxoneIntegration {
   direct_diagnostics?: DirectDiagnostics;
   robots: LoxoneRobot[];
   fleet?: FleetHealth;
+  template_status: {
+    native_generation: boolean;
+    format_verified: boolean;
+    reason: string;
+    required_samples: string[];
+  };
 }
 
 export interface LoxoneExportSelection {

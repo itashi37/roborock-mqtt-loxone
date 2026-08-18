@@ -124,6 +124,7 @@ func (ws *WebServer) setupRoutes() {
 		r.Get("/health", ws.healthCheck)
 		r.Get("/livez", ws.liveness)
 		r.Get("/fleet/health", ws.fleetHealth)
+		r.Get("/loxone/templates/status", ws.loxoneTemplateStatus)
 		r.Get("/setup/status", ws.setupStatus)
 		r.Put("/setup/settings", ws.setupSave)
 		r.Post("/setup/mqtt/test", ws.mqttConfigTest)

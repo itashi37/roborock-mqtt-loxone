@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/mqtt-home/roborock-mqtt/config"
 	loxonedirect "github.com/mqtt-home/roborock-mqtt/loxone/direct"
+	"github.com/mqtt-home/roborock-mqtt/loxone/templates"
 	"github.com/mqtt-home/roborock-mqtt/roborock"
 )
 
@@ -62,6 +63,7 @@ type loxoneIntegrationResponse struct {
 	DirectDiagnostics     *loxonedirect.SyncDiagnostics `json:"direct_diagnostics,omitempty"`
 	Robots                []loxoneRobotResponse         `json:"robots"`
 	Fleet                 *roborock.FleetHealth         `json:"fleet,omitempty"`
+	TemplateStatus        templates.Status              `json:"template_status"`
 }
 
 type loxoneRobotResponse struct {
@@ -124,6 +126,7 @@ func (ws *WebServer) buildLoxoneIntegration() (loxoneIntegrationResponse, error)
 		SubscriptionLimit:     loxoneSubscriptionLimit,
 		SubscriptionsPerRobot: 2,
 		Robots:                []loxoneRobotResponse{},
+		TemplateStatus:        templates.StatusForCurrentBuild(),
 	}
 	dependencies := ws.getLoxoneIntegration()
 	if dependencies != nil {
@@ -144,7 +147,13 @@ func (ws *WebServer) buildLoxoneIntegration() (loxoneIntegrationResponse, error)
 	for _, device := range ws.deviceManager.GetDevices() {
 		response.Robots = append(response.Robots, ws.buildLoxoneRobot(device))
 	}
-	response.SubscriptionsRequired = len(response.Robots) * response.SubscriptionsPerRobot
+	mqttRobots := 0
+	for _, robot := range response.Robots {
+		if robot.MQTTEnabled {
+			mqttRobots++
+		}
+	}
+	response.SubscriptionsRequired = mqttRobots * response.SubscriptionsPerRobot
 	response.ExceedsLimit = response.SubscriptionsRequired > response.SubscriptionLimit
 	if response.ExceedsLimit {
 		response.Warning = fmt.Sprintf("Standard configuration requires %d subscriptions and exceeds the Loxone limit of %d; export remains available.", response.SubscriptionsRequired, response.SubscriptionLimit)
@@ -401,14 +410,33 @@ type loxoneExportPack struct {
 	ExceedsLimit          bool                `json:"exceeds_limit"`
 	Warning               string              `json:"warning,omitempty"`
 	Robots                []loxoneExportRobot `json:"robots"`
+	TemplateStatus        templates.Status    `json:"native_template_status"`
 }
 
 type loxoneExportRobot struct {
-	Slug   string                `json:"slug"`
-	Name   string                `json:"name"`
-	Topics loxoneTopics          `json:"topics"`
-	Rooms  []loxoneRoomResponse  `json:"rooms"`
-	Scenes []loxoneSceneResponse `json:"scenes"`
+	Slug          string                `json:"slug"`
+	Name          string                `json:"name"`
+	MQTTEnabled   bool                  `json:"mqtt_enabled"`
+	DirectEnabled bool                  `json:"direct_enabled"`
+	Topics        loxoneTopics          `json:"topics"`
+	Rooms         []loxoneRoomResponse  `json:"rooms"`
+	Scenes        []loxoneSceneResponse `json:"scenes"`
+	DirectInputs  []loxoneDirectInput   `json:"direct_inputs,omitempty"`
+	DirectOutputs []loxoneDirectOutput  `json:"direct_outputs,omitempty"`
+}
+
+type loxoneDirectInput struct {
+	Name  string `json:"name"`
+	Field string `json:"field"`
+	Kind  string `json:"kind"`
+}
+
+type loxoneDirectOutput struct {
+	Name    string `json:"name"`
+	Method  string `json:"method"`
+	Path    string `json:"path"`
+	Command string `json:"command"`
+	Level   string `json:"level"`
 }
 
 func (ws *WebServer) loxoneExport(w http.ResponseWriter, r *http.Request) {
@@ -456,7 +484,7 @@ func (ws *WebServer) buildLoxoneExport(request loxoneExportRequest) (loxoneExpor
 		}
 	}
 	pack := loxoneExportPack{
-		Schema:                "roborock-mqtt-loxone-integration/v1",
+		Schema:                "roborock-mqtt-loxone-integration/v2",
 		Project:               "roborock-mqtt-loxone",
 		Upstream:              "https://github.com/mqtt-home/roborock-mqtt",
 		GeneratedAt:           time.Now().UTC().Format(time.RFC3339),
@@ -464,6 +492,7 @@ func (ws *WebServer) buildLoxoneExport(request loxoneExportRequest) (loxoneExpor
 		SubscriptionsPerRobot: 2,
 		SubscriptionLimit:     loxoneSubscriptionLimit,
 		Robots:                []loxoneExportRobot{},
+		TemplateStatus:        templates.StatusForCurrentBuild(),
 	}
 	seen := make(map[string]bool)
 	for _, selection := range request.Robots {
@@ -475,7 +504,7 @@ func (ws *WebServer) buildLoxoneExport(request loxoneExportRequest) (loxoneExpor
 			return loxoneExportPack{}, fmt.Errorf("robot %q selected more than once", selection.Slug)
 		}
 		seen[selection.Slug] = true
-		exported := loxoneExportRobot{Slug: robot.Slug, Name: robot.Name, Topics: robot.Topics, Rooms: []loxoneRoomResponse{}, Scenes: []loxoneSceneResponse{}}
+		exported := loxoneExportRobot{Slug: robot.Slug, Name: robot.Name, MQTTEnabled: robot.MQTTEnabled, DirectEnabled: robot.DirectEnabled, Topics: robot.Topics, Rooms: []loxoneRoomResponse{}, Scenes: []loxoneSceneResponse{}}
 		for _, id := range uniqueInts(selection.RoomIDs) {
 			room, found := findLoxoneRoom(robot.Rooms, id)
 			if !found {
@@ -490,14 +519,64 @@ func (ws *WebServer) buildLoxoneExport(request loxoneExportRequest) (loxoneExpor
 			}
 			exported.Scenes = append(exported.Scenes, scene)
 		}
+		if exported.DirectEnabled {
+			exported.DirectInputs, exported.DirectOutputs = ws.directExportPlan(robot, exported.Rooms, exported.Scenes)
+		}
 		pack.Robots = append(pack.Robots, exported)
 	}
-	pack.SubscriptionsRequired = len(pack.Robots) * pack.SubscriptionsPerRobot
+	mqttRobots := 0
+	for _, robot := range pack.Robots {
+		if robot.MQTTEnabled {
+			mqttRobots++
+		}
+	}
+	pack.SubscriptionsRequired = mqttRobots * pack.SubscriptionsPerRobot
 	pack.ExceedsLimit = pack.SubscriptionsRequired > pack.SubscriptionLimit
 	if pack.ExceedsLimit {
 		pack.Warning = fmt.Sprintf("WARNING: the standard configuration needs %d MQTT subscriptions, exceeding Loxone's limit of %d. This pack was generated as requested; split the integration across MQTT plugins/Miniservers or reduce the selected robots.", pack.SubscriptionsRequired, pack.SubscriptionLimit)
 	}
 	return pack, nil
+}
+
+func (ws *WebServer) directExportPlan(robot loxoneRobotResponse, rooms []loxoneRoomResponse, scenes []loxoneSceneResponse) ([]loxoneDirectInput, []loxoneDirectOutput) {
+	device := ws.deviceManager.GetDevice(robot.Slug)
+	state := roborock.InternalDeviceState{Slug: robot.Slug, UpdatedAt: time.Now()}
+	if device != nil {
+		state.Status = device.GetStatus()
+	}
+	mapping := loxonedirect.InputMapping{Prefix: config.Get().Loxone.Direct.InputPrefix, Overrides: config.Get().Loxone.Direct.Inputs}
+	values := loxonedirect.ValuesForState(state, mapping)
+	inputs := make([]loxoneDirectInput, 0, len(values))
+	for _, value := range values {
+		inputs = append(inputs, loxoneDirectInput{Name: value.Input, Field: value.Field, Kind: string(value.Kind)})
+	}
+	base := "/api/loxone/direct/v1/devices/" + robot.Slug + "/commands/"
+	outputs := []loxoneDirectOutput{
+		{Name: "Start", Method: "POST", Path: base + "start", Command: "start", Level: "safe"},
+		{Name: "Pause", Method: "POST", Path: base + "pause", Command: "pause", Level: "safe"},
+		{Name: "Dock", Method: "POST", Path: base + "dock", Command: "dock", Level: "safe"},
+	}
+	for _, room := range rooms {
+		outputs = append(outputs, loxoneDirectOutput{Name: "Clean " + room.EffectiveName, Method: "POST", Path: fmt.Sprintf("%srooms/%d", base, room.ID), Command: room.Command, Level: "safe"})
+	}
+	for _, scene := range scenes {
+		outputs = append(outputs, loxoneDirectOutput{Name: "Scene " + scene.Name, Method: "POST", Path: fmt.Sprintf("%sscenes/%d", base, scene.ID), Command: scene.Command, Level: "safe"})
+	}
+	advanced := []struct {
+		name, command string
+		capability    roborock.Capability
+	}{
+		{"Stop", "stop", robot.Capabilities.Stop}, {"Locate", "locate", robot.Capabilities.Locate},
+		{"Empty dustbin", "empty_dustbin", robot.Capabilities.DockEmpty}, {"Stop emptying", "stop_emptying", robot.Capabilities.DockEmpty},
+		{"Wash mop", "wash_mop", robot.Capabilities.MopWash}, {"Stop washing", "stop_washing", robot.Capabilities.MopWash},
+		{"Dry mop", "dry_mop", robot.Capabilities.MopDry}, {"Stop drying", "stop_drying", robot.Capabilities.MopDry},
+	}
+	for _, item := range advanced {
+		if item.capability.Supported != nil && *item.capability.Supported {
+			outputs = append(outputs, loxoneDirectOutput{Name: item.name, Method: "POST", Path: base + item.command, Command: item.command, Level: "advanced"})
+		}
+	}
+	return inputs, outputs
 }
 
 func createLoxoneExportZIP(pack loxoneExportPack) ([]byte, error) {
@@ -516,6 +595,22 @@ func createLoxoneExportZIP(pack loxoneExportPack) ([]byte, error) {
 	if err := addZIPFile(writer, "command-recognition.csv", loxoneRecognitionCSV(pack)); err != nil {
 		return nil, err
 	}
+	if err := addZIPFile(writer, "direct-inputs.csv", loxoneDirectInputsCSV(pack)); err != nil {
+		return nil, err
+	}
+	if err := addZIPFile(writer, "direct-outputs.csv", loxoneDirectOutputsCSV(pack)); err != nil {
+		return nil, err
+	}
+	templateStatus, err := json.MarshalIndent(pack.TemplateStatus, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := addZIPFile(writer, "template-status.json", append(templateStatus, '\n')); err != nil {
+		return nil, err
+	}
+	if err := addZIPFile(writer, "TEMPLATE-SAMPLES-NEEDED.md", []byte(loxoneTemplateRequirementsMarkdown(pack.TemplateStatus))); err != nil {
+		return nil, err
+	}
 	if err := addZIPFile(writer, "SETUP.md", []byte(loxoneSetupMarkdown(pack))); err != nil {
 		return nil, err
 	}
@@ -523,6 +618,44 @@ func createLoxoneExportZIP(pack loxoneExportPack) ([]byte, error) {
 		return nil, err
 	}
 	return buffer.Bytes(), nil
+}
+
+func loxoneDirectInputsCSV(pack loxoneExportPack) []byte {
+	var buffer bytes.Buffer
+	writer := csv.NewWriter(&buffer)
+	_ = writer.Write([]string{"Robot", "Virtual Input", "Field", "Type"})
+	for _, robot := range pack.Robots {
+		for _, input := range robot.DirectInputs {
+			_ = writer.Write([]string{safeCSV(robot.Name), safeCSV(input.Name), input.Field, input.Kind})
+		}
+	}
+	writer.Flush()
+	return buffer.Bytes()
+}
+
+func loxoneDirectOutputsCSV(pack loxoneExportPack) []byte {
+	var buffer bytes.Buffer
+	writer := csv.NewWriter(&buffer)
+	_ = writer.Write([]string{"Robot", "Name", "Method", "Relative path", "Command", "Safety level"})
+	for _, robot := range pack.Robots {
+		for _, output := range robot.DirectOutputs {
+			_ = writer.Write([]string{safeCSV(robot.Name), safeCSV(output.Name), output.Method, output.Path, output.Command, output.Level})
+		}
+	}
+	writer.Flush()
+	return buffer.Bytes()
+}
+
+func loxoneTemplateRequirementsMarkdown(status templates.Status) string {
+	var builder strings.Builder
+	builder.WriteString("# Native Loxone Config template generation\n\n")
+	builder.WriteString("Native generation is deliberately disabled: " + status.Reason + ".\n\n")
+	builder.WriteString("Export these minimal templates from the exact Loxone Config version used by the installation, without credentials or real IP addresses:\n\n")
+	for _, sample := range status.RequiredSamples {
+		builder.WriteString("- `" + string(sample) + "`\n")
+	}
+	builder.WriteString("\nThe files will be used as fixtures to validate element names, namespaces, identifiers, encodings and import behavior before a generator is enabled.\n")
+	return builder.String()
 }
 
 func addZIPFile(writer *zip.Writer, name string, data []byte) error {
@@ -539,6 +672,9 @@ func loxoneTopicsCSV(pack loxoneExportPack) []byte {
 	writer := csv.NewWriter(&buffer)
 	_ = writer.Write([]string{"Robot", "Direction", "Topic", "Retained", "Purpose"})
 	for _, robot := range pack.Robots {
+		if !robot.MQTTEnabled {
+			continue
+		}
 		_ = writer.Write([]string{safeCSV(robot.Name), "Subscribe", robot.Topics.Core, "yes", "Compact current state"})
 		_ = writer.Write([]string{safeCSV(robot.Name), "Subscribe", robot.Topics.Activity, "no", "Command progress and robot events"})
 		_ = writer.Write([]string{safeCSV(robot.Name), "Publish", robot.Topics.Command, "no", "Text commands"})
@@ -577,11 +713,18 @@ func loxoneSetupMarkdown(pack loxoneExportPack) string {
 	if pack.Warning != "" {
 		builder.WriteString("## Subscription warning\n\n**" + pack.Warning + "**\n\n")
 	}
-	builder.WriteString(fmt.Sprintf("The selected configuration uses **%d subscriptions** (%d per robot). The documented Loxone limit is %d.\n\n", pack.SubscriptionsRequired, pack.SubscriptionsPerRobot, pack.SubscriptionLimit))
-	builder.WriteString("## Setup\n\n1. Add one MQTT plugin in Network Periphery and enter your broker settings manually. No credentials are included in this archive.\n2. For each robot, add the two Subscribe objects from `topics.csv`.\n3. Add one Publish object using the robot's `/command` topic. Ensure Retain is disabled.\n4. Connect the `/core` text subscription to Command Recognition blocks using `command-recognition.csv`.\n5. Connect `/activity` to recognition blocks for the events you need.\n6. Create Start, Pause and Dock controls that publish `start`, `pause` and `dock`.\n7. Add selected room and scene commands listed below.\n\n")
+	builder.WriteString(fmt.Sprintf("The selected MQTT configuration uses **%d subscriptions** (%d per MQTT-enabled robot). The documented Loxone limit is %d. Direct HTTP uses no MQTT subscriptions.\n\n", pack.SubscriptionsRequired, pack.SubscriptionsPerRobot, pack.SubscriptionLimit))
+	builder.WriteString("## MQTT setup\n\nFor MQTT-enabled robots, add the two Subscribe objects and one non-retained Publish object from `topics.csv`, then use `command-recognition.csv`. Broker credentials are never included.\n\n")
+	builder.WriteString("## Direct HTTP setup\n\nCreate Virtual Inputs from `direct-inputs.csv`. Create authenticated HTTP POST Virtual Outputs from `direct-outputs.csv`, prefixing each relative path with the bridge address. Enter the dedicated command API credentials manually in Loxone Config.\n\n")
+	builder.WriteString("## Native template status\n\nNo XML is generated. See `TEMPLATE-SAMPLES-NEEDED.md`; native generation stays locked until real exports from the target Loxone Config version pass fixture and round-trip validation.\n\n")
 	for _, robot := range pack.Robots {
 		builder.WriteString("## " + robot.Name + " (`" + robot.Slug + "`)\n\n")
-		builder.WriteString("- Core: `" + robot.Topics.Core + "`\n- Activity: `" + robot.Topics.Activity + "`\n- Command: `" + robot.Topics.Command + "`\n")
+		if robot.MQTTEnabled {
+			builder.WriteString("- Core: `" + robot.Topics.Core + "`\n- Activity: `" + robot.Topics.Activity + "`\n- Command: `" + robot.Topics.Command + "`\n")
+		}
+		if robot.DirectEnabled {
+			builder.WriteString(fmt.Sprintf("- Direct plan: %d Virtual Inputs, %d Virtual Outputs\n", len(robot.DirectInputs), len(robot.DirectOutputs)))
+		}
 		for _, room := range robot.Rooms {
 			builder.WriteString("- Room " + room.EffectiveName + ": `" + room.Command + "`\n")
 		}

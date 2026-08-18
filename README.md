@@ -542,6 +542,10 @@ The **Download Loxone Integration** button generates a
 - `integration.json` — detected robots, selected rooms/scenes and topic contract;
 - `topics.csv` — the two subscriptions and one publish per selected robot;
 - `command-recognition.csv` — suggested Loxone recognition expressions;
+- `direct-inputs.csv` — Virtual Input names, fields and types for Direct mode;
+- `direct-outputs.csv` — credential-free POST paths for safe and supported advanced commands;
+- `template-status.json` — machine-readable native-template validation status;
+- `TEMPLATE-SAMPLES-NEEDED.md` — exact exports still required from your Loxone Config version;
 - `SETUP.md` — step-by-step setup and official Loxone references.
 
 No MQTT username, password, Roborock session, token, local key, or device
@@ -549,6 +553,12 @@ secret is exported. The archive is deliberately a configuration assistant,
 not an undocumented XML or `.LoxPLAN` file. Loxone documents a limit of 16
 MQTT subscriptions; the page warns when the selection exceeds that budget but
 still allows the pack to be generated.
+
+Native XML generation remains disabled until five minimal, real exports from
+the exact target Loxone Config version are available: Virtual Input digital,
+Virtual Input analog, Virtual Text Input, Virtual Output HTTP, and Virtual
+Output HTTP POST (if supported). The project will validate namespaces,
+identifiers, encoding and round-trip import before enabling any generator.
 
 ## Development
 
