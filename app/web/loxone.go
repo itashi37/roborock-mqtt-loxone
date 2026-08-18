@@ -168,52 +168,47 @@ func (ws *WebServer) buildLoxoneRobot(device *roborock.ManagedDevice) loxoneRobo
 }
 
 func (ws *WebServer) loxoneRooms(device *roborock.ManagedDevice) []loxoneRoomResponse {
-	var vectorMap roborock.VectorMap
-	if err := json.Unmarshal(device.GetVectorMapJSON(), &vectorMap); err != nil {
+	mappings := device.GetRoomMappings()
+	if len(mappings) == 0 {
 		return []loxoneRoomResponse{}
 	}
 	apiNames := ws.restClient.GetRoomNameMap()
 	configNames := config.Get().Roborock.RoomNames[device.Info.Name]
-	baseNames := roborock.MergeRoomNames(apiNames, configNames)
 	overrides := map[string]string{}
 	dependencies := ws.getLoxoneIntegration()
 	if dependencies != nil && dependencies.RoomOverrides != nil {
 		overrides = dependencies.RoomOverrides.ForDevice(device.Slug)
 	}
-	effective := roborock.MergeRoomNames(baseNames, overrides)
+	effective := roborock.CommandableRoomNames(mappings, apiNames, configNames, overrides)
 	counts := make(map[string]int)
-	for _, room := range vectorMap.Rooms {
-		name := effective[strconv.Itoa(room.ID)]
-		if name == "" {
-			name = fmt.Sprintf("Room %d", room.ID)
-		}
+	for _, name := range effective {
 		counts[strings.ToLower(strings.TrimSpace(name))]++
 	}
 
-	rooms := make([]loxoneRoomResponse, 0, len(vectorMap.Rooms))
+	rooms := make([]loxoneRoomResponse, 0, len(mappings))
 	seen := make(map[int]bool)
-	for _, room := range vectorMap.Rooms {
-		if seen[room.ID] {
+	for _, mapping := range mappings {
+		if seen[mapping.SegmentID] {
 			continue
 		}
-		seen[room.ID] = true
-		id := strconv.Itoa(room.ID)
-		roborockName := strings.TrimSpace(apiNames[id])
+		seen[mapping.SegmentID] = true
+		id := strconv.Itoa(mapping.SegmentID)
+		roborockName := strings.TrimSpace(apiNames[mapping.HomeRoomID])
 		if roborockName == "" {
-			roborockName = fmt.Sprintf("Room %d", room.ID)
+			roborockName = fmt.Sprintf("Room %d", mapping.SegmentID)
 		}
 		effectiveName := strings.TrimSpace(effective[id])
 		if effectiveName == "" {
-			effectiveName = fmt.Sprintf("Room %d", room.ID)
+			effectiveName = fmt.Sprintf("Room %d", mapping.SegmentID)
 		}
 		rooms = append(rooms, loxoneRoomResponse{
-			ID:            room.ID,
+			ID:            mapping.SegmentID,
 			RoborockName:  roborockName,
 			ConfigName:    configNames[id],
 			OverrideName:  overrides[id],
 			EffectiveName: effectiveName,
 			Conflict:      counts[strings.ToLower(effectiveName)] > 1,
-			Command:       fmt.Sprintf("clean_room_id:%d", room.ID),
+			Command:       fmt.Sprintf("clean_room_id:%d", mapping.SegmentID),
 		})
 	}
 	sort.Slice(rooms, func(i, j int) bool { return rooms[i].ID < rooms[j].ID })
@@ -236,7 +231,7 @@ func (ws *WebServer) loxoneRoomOverrideSave(w http.ResponseWriter, r *http.Reque
 	}
 	apiNames := ws.restClient.GetRoomNameMap()
 	configNames := config.Get().Roborock.RoomNames[device.Info.Name]
-	baseNames := roborock.MergeRoomNames(apiNames, configNames)
+	baseNames := roborock.CommandableRoomNames(device.GetRoomMappings(), apiNames, configNames, nil)
 	dependencies := ws.getLoxoneIntegration()
 	if err := dependencies.RoomOverrides.Set(device.Slug, roomID, request.Name, baseNames); err != nil {
 		writeLoxoneError(w, http.StatusConflict, err)

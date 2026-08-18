@@ -258,6 +258,9 @@ func ParseLoxoneCommand(payload string, roomNames map[string]string, scenes []Sc
 		if err != nil {
 			return LoxoneCommand{}, err
 		}
+		if err := validateCommandableRoomID(id, roomNames); err != nil {
+			return LoxoneCommand{}, err
+		}
 		return LoxoneCommand{Action: "segment_clean", Segments: []int{id}}, nil
 	case "clean_room_ids":
 		if !hasArgument || argument == "" {
@@ -268,6 +271,9 @@ func ParseLoxoneCommand(payload string, roomNames map[string]string, scenes []Sc
 		for _, part := range parts {
 			id, err := parsePositiveID(part, "room")
 			if err != nil {
+				return LoxoneCommand{}, err
+			}
+			if err := validateCommandableRoomID(id, roomNames); err != nil {
 				return LoxoneCommand{}, err
 			}
 			ids = appendUniqueInt(ids, id)
@@ -315,6 +321,13 @@ func ParseLoxoneCommand(payload string, roomNames map[string]string, scenes []Sc
 	default:
 		return LoxoneCommand{}, fmt.Errorf("unknown command %q", verb)
 	}
+}
+
+func validateCommandableRoomID(id int, roomNames map[string]string) error {
+	if _, ok := roomNames[strconv.Itoa(id)]; !ok {
+		return fmt.Errorf("room %d is not commandable on the active map", id)
+	}
+	return nil
 }
 
 func resolveUniqueRoomName(name string, roomNames map[string]string) (int, error) {

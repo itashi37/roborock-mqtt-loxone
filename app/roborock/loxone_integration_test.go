@@ -57,6 +57,19 @@ func TestLoxoneRoomOverrideStoreRejectsAmbiguousNames(t *testing.T) {
 	}
 }
 
+func TestLoxoneRoomOverrideStoreIgnoresNonCommandableConflicts(t *testing.T) {
+	store, err := NewLoxoneRoomOverrideStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Segment 15 is historical and deliberately absent from baseNames, the
+	// active commandable inventory supplied by get_room_mapping.
+	store.devices["vacuum"] = map[string]string{"15": "Cuisine"}
+	if err := store.Set("vacuum", 23, "Cuisine", map[string]string{"23": "Room 23", "24": "Salon"}); err != nil {
+		t.Fatalf("historical override caused a false conflict: %v", err)
+	}
+}
+
 func TestLoxoneDiagnosticStoreIsBounded(t *testing.T) {
 	store := NewLoxoneDiagnosticStore(2)
 	for i := int64(1); i <= 3; i++ {

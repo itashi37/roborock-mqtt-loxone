@@ -414,14 +414,17 @@ func (ws *WebServer) deviceMapJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Inject room names: API rooms first, config overrides on top
+	// Inject names keyed by the active map's commandable segment IDs. The cloud
+	// room IDs are joined through get_room_mapping and are never exposed as
+	// segment IDs.
 	apiNames := ws.restClient.GetRoomNameMap()
 	cfg := config.Get()
 	cfgNames := cfg.Roborock.RoomNames[dev.Info.Name]
-	if len(apiNames) > 0 || len(cfgNames) > 0 {
+	roomNames := roborock.CommandableRoomNames(dev.GetRoomMappings(), apiNames, cfgNames, nil)
+	if len(roomNames) > 0 {
 		var vm roborock.VectorMap
 		if err := json.Unmarshal(data, &vm); err == nil {
-			vm.RoomNames = roborock.MergeRoomNames(apiNames, cfgNames)
+			vm.RoomNames = roomNames
 			if enriched, err := json.Marshal(vm); err == nil {
 				data = enriched
 			}

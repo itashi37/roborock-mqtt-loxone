@@ -19,6 +19,7 @@ type ManagedDevice struct {
 	Status       *PublishedStatus
 	MapPNG       []byte
 	VectorMapJSON []byte
+	RoomMappings  []RoomMapping
 	Scenes       []Scene
 	pollCount    int
 	mu           sync.RWMutex
@@ -52,6 +53,18 @@ func (md *ManagedDevice) SetMapPNG(data []byte) {
 	md.mu.Lock()
 	defer md.mu.Unlock()
 	md.MapPNG = data
+}
+
+func (md *ManagedDevice) GetRoomMappings() []RoomMapping {
+	md.mu.RLock()
+	defer md.mu.RUnlock()
+	return append([]RoomMapping(nil), md.RoomMappings...)
+}
+
+func (md *ManagedDevice) SetRoomMappings(mappings []RoomMapping) {
+	md.mu.Lock()
+	defer md.mu.Unlock()
+	md.RoomMappings = append([]RoomMapping(nil), mappings...)
 }
 
 // DeviceManager manages multiple Roborock devices.
@@ -312,6 +325,13 @@ func (dm *DeviceManager) PollAll() {
 		shouldPollMap := published.InCleaning || md.pollCount == 0 || md.pollCount%5 == 0
 		md.pollCount++
 		if shouldPollMap {
+			mappings, mappingErr := md.CloudMQTT.PollRoomMappings()
+			if mappingErr != nil {
+				md.SetRoomMappings(nil)
+				logger.Warn("Failed to refresh active room mapping", "device", md.Slug, "error", mappingErr)
+			} else {
+				md.SetRoomMappings(mappings)
+			}
 			mapPNG, mapData, err := md.CloudMQTT.PollMap()
 			if err != nil {
 				logger.Debug("Failed to poll map", "device", md.Slug, "error", err)

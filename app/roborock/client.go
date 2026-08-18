@@ -514,7 +514,9 @@ func (c *Client) GetRooms() []RoomInfo {
 	return c.rooms
 }
 
-// GetRoomNameMap returns a map of room ID (as string) to room name.
+// GetRoomNameMap returns home-level cloud room IDs mapped to names. These IDs
+// are not segment IDs; get_room_mapping is required to join them to the active
+// map's app_segment_clean IDs.
 func (c *Client) GetRoomNameMap() map[string]string {
 	names := make(map[string]string)
 	for _, r := range c.rooms {

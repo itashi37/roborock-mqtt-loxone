@@ -261,8 +261,8 @@ func blockTypeLabel(id int) string {
 		return "No-Go Zones"
 	case BlockVirtualWalls:
 		return "Virtual Walls"
-	case BlockRoomSegments:
-		return "Room Segments"
+	case BlockMapBlocks:
+		return "Map Blocks"
 	case BlockNoMopZones:
 		return "No-Mop Zones"
 	case 13:

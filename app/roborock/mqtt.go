@@ -476,6 +476,20 @@ func (cm *CloudMQTT) PollConsumables() (*ConsumableStatus, error) {
 	return ParseConsumableStatus(resp)
 }
 
+// PollRoomMappings requests the commandable rooms for the currently active
+// Roborock map.
+func (cm *CloudMQTT) PollRoomMappings() ([]RoomMapping, error) {
+	payload, requestID, err := BuildGetRoomMappingPayload()
+	if err != nil {
+		return nil, err
+	}
+	response, err := cm.SendCommand(payload, requestID)
+	if err != nil {
+		return nil, fmt.Errorf("poll room mapping: %w", err)
+	}
+	return ParseRoomMappings(response)
+}
+
 // handleMapResponse processes a Protocol 301 map data message.
 func (cm *CloudMQTT) handleMapResponse(encrypted []byte) {
 	if cm.mapSecurity == nil {

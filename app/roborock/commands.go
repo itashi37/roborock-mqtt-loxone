@@ -254,6 +254,12 @@ func BuildGetConsumablePayload() ([]byte, int, error) {
 	return buildIPCPayload("get_consumable", []any{})
 }
 
+// BuildGetRoomMappingPayload creates the request for the active map's
+// commandable segment-to-home-room mapping.
+func BuildGetRoomMappingPayload() ([]byte, int, error) {
+	return buildIPCPayload("get_room_mapping", []any{})
+}
+
 // BuildGetMapPayload creates the payload for GET_MAP_V1 with security nonce.
 func BuildGetMapPayload() ([]byte, int, *MapSecurityData, error) {
 	security := GenerateMapSecurity()

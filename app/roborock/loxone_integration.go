@@ -143,15 +143,17 @@ func (s *LoxoneRoomOverrideStore) saveLocked() error {
 }
 
 func validateUniqueLoxoneRoomNames(baseNames, overrides map[string]string) error {
-	effective := MergeRoomNames(baseNames, overrides)
-	ids := make([]string, 0, len(effective))
-	for id := range effective {
+	ids := make([]string, 0, len(baseNames))
+	for id := range baseNames {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 	seen := make(map[string]string)
 	for _, id := range ids {
-		name := strings.TrimSpace(effective[id])
+		name := strings.TrimSpace(baseNames[id])
+		if override := strings.TrimSpace(overrides[id]); override != "" {
+			name = override
+		}
 		if name == "" {
 			continue
 		}

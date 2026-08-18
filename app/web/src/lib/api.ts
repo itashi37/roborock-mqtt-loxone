@@ -187,7 +187,7 @@ export async function testLoxoneCommand(slug: string, command: string): Promise<
 export async function testLoxoneMQTT(): Promise<LoxoneMQTTTest> {
   const response = await fetch(`${API_BASE}/loxone/mqtt-test`, { method: 'POST' });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.message || data.error || 'MQTT test failed');
+  if (!response.ok && typeof data?.ok !== 'boolean') throw new Error(data.message || data.error || 'MQTT test failed');
   return data;
 }
 

@@ -154,11 +154,16 @@ func publishLoxoneActivities(slug string, activities []roborock.LoxoneActivity) 
 
 func loxoneRoomNames(dev *roborock.ManagedDevice, restClient *roborock.Client) map[string]string {
 	cfg := config.Get()
-	names := roborock.MergeRoomNames(restClient.GetRoomNameMap(), cfg.Roborock.RoomNames[dev.Info.Name])
+	overrides := map[string]string{}
 	if loxoneRoomOverrides != nil {
-		names = roborock.MergeRoomNames(names, loxoneRoomOverrides.ForDevice(dev.Slug))
+		overrides = loxoneRoomOverrides.ForDevice(dev.Slug)
 	}
-	return names
+	return roborock.CommandableRoomNames(
+		dev.GetRoomMappings(),
+		restClient.GetRoomNameMap(),
+		cfg.Roborock.RoomNames[dev.Info.Name],
+		overrides,
+	)
 }
 
 func refreshLoxoneCurrentRoom(slug string, restClient *roborock.Client) {

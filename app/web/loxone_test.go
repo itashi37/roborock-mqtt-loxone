@@ -122,6 +122,78 @@ func TestLoxoneCommandEndpointUsesInjectedPublisher(t *testing.T) {
 	}
 }
 
+func TestLoxoneRoomsExposeOnlyActiveCommandableSegments(t *testing.T) {
+	loadLoxoneTestConfig(t)
+	client := loxoneTestClientWithRooms(t, []roborock.RoomInfo{
+		{ID: 23364799, Name: "Cuisine"},
+		{ID: 23364800, Name: "Salon"},
+		{ID: 23364801, Name: "Entrée"},
+		{ID: 99999999, Name: "Ancienne pièce"},
+	})
+	manager := roborock.NewDeviceManager(&roborock.LoginData{}, []roborock.DeviceInfo{{Name: "Vacuum"}}, client, t.TempDir())
+	device := manager.GetDevice("vacuum")
+	device.SetRoomMappings([]roborock.RoomMapping{
+		{SegmentID: 7, HomeRoomID: "23364799"},
+		{SegmentID: 8, HomeRoomID: "23364800"},
+		{SegmentID: 23, HomeRoomID: "23364801"},
+	})
+	// The geometry may still contain an old segment. It must remain usable by
+	// current_room but must not enter the commandable inventory.
+	device.VectorMapJSON = []byte(`{"rooms":[{"id":7},{"id":8},{"id":15},{"id":23},{"id":191}]}`)
+
+	server := NewWebServer(manager, client, nil)
+	rooms := server.loxoneRooms(device)
+	if len(rooms) != 3 {
+		t.Fatalf("got %d rooms: %+v", len(rooms), rooms)
+	}
+	wantIDs := []int{7, 8, 23}
+	wantNames := []string{"Cuisine", "Salon", "Entrée"}
+	for index, room := range rooms {
+		if room.ID != wantIDs[index] || room.RoborockName != wantNames[index] || room.EffectiveName != wantNames[index] {
+			t.Fatalf("room %d = %+v, want ID %d named %q", index, room, wantIDs[index], wantNames[index])
+		}
+		if room.Command != "clean_room_id:"+strconv.Itoa(room.ID) {
+			t.Fatalf("wrong command for room %+v", room)
+		}
+	}
+}
+
+func TestLoxoneRoomConflictsOnlyUseCommandableSegments(t *testing.T) {
+	loadLoxoneTestConfig(t)
+	client := loxoneTestClientWithRooms(t, []roborock.RoomInfo{
+		{ID: 23364799, Name: "Cuisine"},
+		{ID: 99999999, Name: "Cuisine"}, // historical duplicate, not mapped
+		{ID: 23364800, Name: "Salon"},
+	})
+	manager := roborock.NewDeviceManager(&roborock.LoginData{}, []roborock.DeviceInfo{{Name: "Vacuum"}}, client, t.TempDir())
+	device := manager.GetDevice("vacuum")
+	device.SetRoomMappings([]roborock.RoomMapping{{SegmentID: 7, HomeRoomID: "23364799"}, {SegmentID: 8, HomeRoomID: "23364800"}})
+	server := NewWebServer(manager, client, nil)
+	for _, room := range server.loxoneRooms(device) {
+		if room.Conflict {
+			t.Fatalf("historical cloud room caused conflict: %+v", room)
+		}
+	}
+
+	device.SetRoomMappings([]roborock.RoomMapping{{SegmentID: 7, HomeRoomID: "23364799"}, {SegmentID: 8, HomeRoomID: "99999999"}})
+	rooms := server.loxoneRooms(device)
+	if len(rooms) != 2 || !rooms[0].Conflict || !rooms[1].Conflict {
+		t.Fatalf("commandable duplicate was not reported: %+v", rooms)
+	}
+}
+
+func TestLoxoneRoomsFailClosedWithoutActiveMapping(t *testing.T) {
+	loadLoxoneTestConfig(t)
+	client := loxoneTestClientWithRooms(t, []roborock.RoomInfo{{ID: 23364799, Name: "Cuisine"}})
+	manager := roborock.NewDeviceManager(&roborock.LoginData{}, []roborock.DeviceInfo{{Name: "Vacuum"}}, client, t.TempDir())
+	device := manager.GetDevice("vacuum")
+	device.VectorMapJSON = []byte(`{"rooms":[{"id":23},{"id":191}]}`)
+	server := NewWebServer(manager, client, nil)
+	if rooms := server.loxoneRooms(device); len(rooms) != 0 {
+		t.Fatalf("geometry/cloud fallback exposed rooms: %+v", rooms)
+	}
+}
+
 func TestLoxoneExportBeyondLimitWarnsButSucceeds(t *testing.T) {
 	loadLoxoneTestConfig(t)
 	devices := make([]roborock.DeviceInfo, 0, 9)
@@ -180,4 +252,25 @@ func loadLoxoneTestConfig(t *testing.T) {
 	if _, err := appconfig.LoadConfig(file); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func loxoneTestClientWithRooms(t *testing.T, rooms []roborock.RoomInfo) *roborock.Client {
+	t.Helper()
+	dir := t.TempDir()
+	client := roborock.NewClient("", "", "", "")
+	client.SetSessionDir(dir)
+	data, err := json.Marshal(map[string]any{
+		"login_data": roborock.LoginData{},
+		"rooms":      rooms,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "session.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !client.LoadSession() {
+		t.Fatal("failed to load test room session")
+	}
+	return client
 }

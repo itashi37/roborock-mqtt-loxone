@@ -310,6 +310,13 @@ room names override names discovered through the Roborock API. Ambiguous or
 unknown names are rejected; ID-based commands remain available as an explicit
 fallback.
 
+The room inventory uses the active robot response from `get_room_mapping`.
+Only segment IDs accepted by `app_segment_clean` are exposed or accepted by
+room commands. Large home-level room IDs and historical rooms are used only to
+resolve names and are never treated as cleaning segments. If the active mapping
+is unavailable, the bridge exposes no commandable rooms instead of falling back
+to map pixels or the unfiltered home room catalogue.
+
 Commands must be published with `retain=false`. On startup the bridge clears
 any retained `/command` value before subscribing, preventing a stale command
 from being replayed after a restart.

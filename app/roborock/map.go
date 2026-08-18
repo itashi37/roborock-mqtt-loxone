@@ -19,7 +19,7 @@ const (
 	BlockRobotPosition = 8
 	BlockNoGoZones     = 9
 	BlockVirtualWalls  = 10
-	BlockRoomSegments  = 11
+	BlockMapBlocks     = 11
 	BlockNoMopZones    = 12
 )
 
@@ -41,7 +41,6 @@ type MapData struct {
 	Charger      *MapPosition
 	Robot        *MapPosition
 	Path         []MapPoint
-	Rooms        map[int]bool // room IDs present
 	DebugBlocks  []DebugBlock
 }
 
@@ -88,7 +87,6 @@ func ParseMapData(data []byte) (*MapData, error) {
 		MinorVersion: int(binary.LittleEndian.Uint16(data[10:12])),
 		MapIndex:     int(binary.LittleEndian.Uint32(data[12:16])),
 		MapSequence:  int(binary.LittleEndian.Uint32(data[16:20])),
-		Rooms:        make(map[int]bool),
 	}
 
 	// Parse blocks
@@ -153,12 +151,9 @@ func parseBlock(md *MapData, blockType int, header []byte, data []byte) {
 			}
 			db.Points = []MapPoint{{X: md.Robot.X, Y: md.Robot.Y}}
 		}
-	case BlockRoomSegments:
-		for _, b := range data {
-			if b > 0 {
-				md.Rooms[int(b)] = true
-			}
-		}
+	case BlockMapBlocks:
+		// Block 11 contains map block metadata, not the authoritative list of
+		// app_segment_clean IDs. Commandable rooms come from get_room_mapping.
 	case BlockGoToPath, BlockPredictedPath:
 		parsPathBlock(md, header, data)
 	case BlockGoToTarget:
@@ -282,17 +277,29 @@ const (
 	PixelRoom    PixelType = 3
 )
 
-// ClassifyPixel determines the type and room ID of a pixel value.
-// Encoding: 0=outside, 1=floor/inside, 255=wall, 2-254=room segments.
+// ClassifyPixel determines the type and room ID of a Roborock map pixel.
+// The low three bits describe the pixel type. Room pixels use type 7 and
+// store the segment ID in the upper five bits.
 func ClassifyPixel(value byte) (PixelType, int) {
 	switch {
 	case value == 0:
 		return PixelEmpty, 0
-	case value == 255:
-		return PixelWall, 0
 	case value == 1:
+		return PixelWall, 0
+	case value == 255 || value == 7:
 		return PixelFloor, 0
-	default:
-		return PixelRoom, int(value)
 	}
+
+	pixelType := value & 0x07
+	if pixelType == 7 {
+		roomID := int(value >> 3)
+		if roomID > 0 {
+			return PixelRoom, roomID
+		}
+		return PixelFloor, 0
+	}
+	if pixelType == 0 || pixelType == 1 {
+		return PixelWall, 0
+	}
+	return PixelFloor, 0
 }

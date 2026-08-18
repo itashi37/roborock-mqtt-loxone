@@ -99,7 +99,7 @@ export function App() {
   return (
     <>
       <Routes>
-        <Route path="/loxone" element={<LoxoneIntegrationPage liveActivities={loxoneActivities} />} />
+        <Route path="/loxone" element={<LoxoneIntegrationPage liveActivities={loxoneActivities} liveStatuses={statuses} liveAvailabilities={availabilities} streamConnected={isConnected} />} />
         <Route path="/devices/:slug/*" element={
           <DeviceLayout
             devices={liveDevices}
