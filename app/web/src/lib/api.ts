@@ -9,14 +9,77 @@ export interface AuthStatus {
   devices?: number;
 }
 
+export interface SetupStatus {
+  setup_complete: boolean;
+  authenticated: boolean;
+  roborock_username: string;
+  mqtt: {
+    enabled: boolean; url: string; retain: boolean; topic: string; qos: number;
+    username: string; tls: boolean; password_configured: boolean;
+  };
+  loxone: {
+    enabled: boolean; topic: string;
+    devices?: Record<string, { mqtt?: boolean; direct?: boolean }>;
+    direct: {
+      enabled: boolean; scheme: string; host: string; port: number; username: string;
+      timeout_seconds: number; max_retries: number; retry_delay_ms: number;
+      input_prefix: string; api_username: string; allowed_cidrs?: string[];
+      allow_get_commands: boolean; rate_limit_per_minute: number;
+      password_configured: boolean; api_token_configured: boolean;
+    };
+  };
+  mqtt_diagnostics: { enabled: boolean; connected: boolean; last_error?: string; subscriptions: number };
+  direct_diagnostics?: { queued: number; last_error?: string; last_success_at?: string };
+}
+
+export async function fetchSetupStatus(): Promise<SetupStatus> {
+  const response = await fetch(`${API_BASE}/setup/status`, { cache: 'no-store' });
+  if (!response.ok) throw new Error('Failed to load integration settings');
+  return response.json();
+}
+
+export async function saveSetupSettings(payload: unknown): Promise<SetupStatus> {
+  const response = await fetch(`${API_BASE}/setup/settings`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Failed to save settings');
+  return data;
+}
+
+export async function testMQTTSettings(payload: unknown): Promise<void> {
+  const response = await fetch(`${API_BASE}/setup/mqtt/test`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'MQTT connection failed');
+}
+
+export async function testDirectSettings(payload: unknown): Promise<void> {
+  const response = await fetch(`${API_BASE}/setup/direct/test`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Miniserver connection failed');
+}
+
+export async function rotateDirectToken(): Promise<string> {
+  const response = await fetch(`${API_BASE}/setup/direct/token/rotate`, { method: 'POST' });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Failed to rotate token');
+  return data.token;
+}
+
 export async function getAuthStatus(): Promise<AuthStatus> {
   const response = await fetch(`${API_BASE}/auth/status`);
   if (!response.ok) throw new Error('Failed to get auth status');
   return response.json();
 }
 
-export async function requestCode(): Promise<void> {
-  const response = await fetch(`${API_BASE}/auth/request-code`, { method: 'POST' });
+export async function requestCode(username?: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/auth/request-code`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }),
+  });
   if (!response.ok) {
     const data = await response.json();
     throw new Error(data.error || 'Failed to request code');

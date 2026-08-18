@@ -54,3 +54,24 @@ func TestClientPushRejectsLoxoneErrorResponse(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestClientTestDoesNotWriteVirtualInput(t *testing.T) {
+	var path string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	parsed, _ := url.Parse(server.URL)
+	port, _ := strconv.Atoi(parsed.Port())
+	client, err := NewClient(ClientConfig{Scheme: "http", Host: parsed.Hostname(), Port: port})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Test(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if path != "/dev/sps/state" {
+		t.Fatalf("test path = %q", path)
+	}
+}

@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/philipparndt/go-logger"
-	"github.com/philipparndt/mqtt-gateway/mqtt"
 )
 
 // SignalListener subscribes to MQTT topics for public holiday and vacation signals.
@@ -16,13 +15,19 @@ type SignalListener struct {
 	vacation      bool
 	mu            sync.RWMutex
 	onChange      func()
+	subscribe     func(string, func(string, []byte)) error
 }
 
 // NewSignalListener creates a listener for the given MQTT signal topics.
-func NewSignalListener(holidayTopic, vacationTopic string) *SignalListener {
+func NewSignalListener(holidayTopic, vacationTopic string, subscribe ...func(string, func(string, []byte)) error) *SignalListener {
+	var subscriber func(string, func(string, []byte)) error
+	if len(subscribe) > 0 {
+		subscriber = subscribe[0]
+	}
 	return &SignalListener{
 		holidayTopic:  holidayTopic,
 		vacationTopic: vacationTopic,
+		subscribe:     subscriber,
 	}
 }
 
@@ -33,9 +38,13 @@ func (sl *SignalListener) SetOnChange(cb func()) {
 
 // Subscribe starts listening on the configured MQTT topics.
 func (sl *SignalListener) Subscribe() {
+	if sl.subscribe == nil {
+		logger.Warn("Schedule signal subscription unavailable")
+		return
+	}
 	logger.Info("Subscribing to schedule signals", "holiday", sl.holidayTopic, "vacation", sl.vacationTopic)
 
-	mqtt.Subscribe(sl.holidayTopic, func(topic string, payload []byte) {
+	_ = sl.subscribe(sl.holidayTopic, func(topic string, payload []byte) {
 		val := parseBool(string(payload))
 		sl.mu.Lock()
 		changed := sl.holiday != val
@@ -47,7 +56,7 @@ func (sl *SignalListener) Subscribe() {
 		}
 	})
 
-	mqtt.Subscribe(sl.vacationTopic, func(topic string, payload []byte) {
+	_ = sl.subscribe(sl.vacationTopic, func(topic string, payload []byte) {
 		val := parseBool(string(payload))
 		sl.mu.Lock()
 		changed := sl.vacation != val

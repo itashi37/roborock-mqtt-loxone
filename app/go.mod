@@ -9,7 +9,6 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/philipparndt/go-logger v1.9.0
 	github.com/philipparndt/go-logger/chi v0.0.0-20260418052559-78574db4574d
-	github.com/philipparndt/mqtt-gateway v1.8.0
 )
 
 require (

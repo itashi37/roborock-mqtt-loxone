@@ -89,3 +89,25 @@ func (c *Client) Push(ctx context.Context, input, value string) error {
 	}
 	return nil
 }
+
+// Test verifies that the Miniserver is reachable and accepts the configured
+// credentials without changing a Virtual Input.
+func (c *Client) Test(ctx context.Context) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/dev/sps/state", nil)
+	if err != nil {
+		return fmt.Errorf("create Loxone test request: %w", err)
+	}
+	if c.username != "" || c.password != "" {
+		request.SetBasicAuth(c.username, c.password)
+	}
+	response, err := c.http.Do(request)
+	if err != nil {
+		return fmt.Errorf("connect to Loxone Miniserver: %w", err)
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64*1024))
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("Loxone HTTP status %d", response.StatusCode)
+	}
+	return nil
+}

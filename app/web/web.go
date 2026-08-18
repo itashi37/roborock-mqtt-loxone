@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +33,8 @@ type WebServer struct {
 	scheduleStore  *roborock.ScheduleStore
 	loxone         *LoxoneDependencies
 	loxoneMu       sync.RWMutex
+	settings       *IntegrationSettingsDependencies
+	settingsMu     sync.RWMutex
 	onAuth         func()
 	router         *chi.Mux
 	sseClients     map[string]*SSEClient
@@ -120,6 +123,11 @@ func (ws *WebServer) setupRoutes() {
 	ws.router.Route("/api", func(r chi.Router) {
 		r.Get("/health", ws.healthCheck)
 		r.Get("/livez", ws.liveness)
+		r.Get("/setup/status", ws.setupStatus)
+		r.Put("/setup/settings", ws.setupSave)
+		r.Post("/setup/mqtt/test", ws.mqttConfigTest)
+		r.Post("/setup/direct/test", ws.directConfigTest)
+		r.Post("/setup/direct/token/rotate", ws.rotateDirectToken)
 
 		// Auth endpoints
 		r.Get("/auth/status", ws.authStatus)
@@ -202,7 +210,21 @@ func (ws *WebServer) authStatus(w http.ResponseWriter, _ *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func (ws *WebServer) requestCode(w http.ResponseWriter, _ *http.Request) {
+func (ws *WebServer) requestCode(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Username string `json:"username"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&request)
+	}
+	if username := strings.TrimSpace(request.Username); username != "" {
+		ws.restClient.SetUsername(username)
+		settings := config.RuntimeSettingsSnapshot()
+		settings.RoborockUsername = username
+		if err := config.SaveRuntimeSettings(settings); err != nil {
+			logger.Warn("Failed to persist Roborock username", "error", err)
+		}
+	}
 	if err := ws.restClient.RequestCode(); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)

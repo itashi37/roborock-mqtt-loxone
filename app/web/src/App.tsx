@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Routes, Route, Navigate, useParams, useNavigate, Link } from 'react-router-dom';
 import { Battery, Sun, Moon, Wifi, WifiOff, Play, Pause, Home, Wind, Droplets, AlertCircle, Clock, MapPin, LogOut, ChevronRight, Wrench, Network } from 'lucide-react';
 import { useSSE } from '@/hooks/useSSE';
-import { pauseCleaning, dockVacuum, getAuthStatus, logout, fetchDevices, fetchScenes, executeScene, setNotAtHome } from '@/lib/api';
+import { pauseCleaning, dockVacuum, getAuthStatus, logout, fetchDevices, fetchScenes, executeScene, setNotAtHome, fetchSetupStatus } from '@/lib/api';
 import type { SceneInfo } from '@/lib/api';
 import { useTheme } from '@/contexts/ThemeContext';
 import { formatCleanTime, formatCleanArea, formatDisplayName } from '@/types/status';
@@ -17,6 +17,7 @@ import { ControlsPage } from '@/components/ControlsPage';
 import { MaintenancePage } from '@/components/MaintenancePage';
 import { SchedulePage } from '@/components/SchedulePage';
 import { LoxoneIntegrationPage } from '@/components/LoxoneIntegrationPage';
+import { SetupWizard } from '@/components/SetupWizard';
 
 const activeCleaningStates = new Set([
   'cleaning', 'spot_cleaning', 'segment_cleaning', 'zoned_cleaning',
@@ -26,6 +27,7 @@ const activeCleaningStates = new Set([
 
 export function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
   const [devices, setDevices] = useState<DeviceSummary[]>([]);
   const { statuses, scheduleStates, availabilities, loxoneActivities, isConnected, error, reconnect } = useSSE();
   const { theme, toggleTheme } = useTheme();
@@ -38,9 +40,9 @@ export function App() {
   const [globalNotAtHome, setGlobalNotAtHome] = useState(false);
 
   useEffect(() => {
-    getAuthStatus()
-      .then(s => setAuthenticated(s.authenticated))
-      .catch(() => setAuthenticated(false));
+    Promise.all([fetchSetupStatus(), getAuthStatus()])
+      .then(([setup, auth]) => { setSetupComplete(setup.setup_complete); setAuthenticated(auth.authenticated); })
+      .catch(() => { setSetupComplete(false); setAuthenticated(false); });
   }, []);
 
   useEffect(() => {
@@ -86,10 +88,14 @@ export function App() {
     setAuthenticated(false);
   };
 
-  if (authenticated === null) {
+  if (authenticated === null || setupComplete === null) {
     return <div className="min-h-screen bg-background flex items-center justify-center">
       <div className="text-muted-foreground">Loading...</div>
     </div>;
+  }
+
+  if (!setupComplete) {
+    return <SetupWizard onComplete={() => { setSetupComplete(true); getAuthStatus().then(s => setAuthenticated(s.authenticated)); }} />;
   }
 
   if (!authenticated) {
@@ -99,6 +105,7 @@ export function App() {
   return (
     <>
       <Routes>
+        <Route path="/setup" element={<SetupWizard reconfigure onComplete={() => { setSetupComplete(true); window.location.assign('/loxone'); }} />} />
         <Route path="/loxone" element={<LoxoneIntegrationPage liveActivities={loxoneActivities} liveStatuses={statuses} liveAvailabilities={availabilities} streamConnected={isConnected} />} />
         <Route path="/devices/:slug/*" element={
           <DeviceLayout
@@ -228,6 +235,9 @@ function DeviceLayout({ devices, statuses, globalNotAtHome, setGlobalNotAtHome, 
             <button onClick={toggleTheme} className="p-2 rounded-lg hover:bg-accent transition-colors" aria-label="Toggle theme">
               {theme === 'dark' ? <Sun className="h-5 w-5 text-foreground" /> : <Moon className="h-5 w-5 text-foreground" />}
             </button>
+            <Link to="/setup" className="p-2 rounded-lg hover:bg-accent transition-colors" aria-label="Integration settings" title="Integration settings">
+              <Network className="h-5 w-5 text-foreground" />
+            </Link>
             <button onClick={onLogout} className="p-2 rounded-lg hover:bg-accent transition-colors" aria-label="Logout" title="Logout">
               <LogOut className="h-5 w-5 text-foreground" />
             </button>

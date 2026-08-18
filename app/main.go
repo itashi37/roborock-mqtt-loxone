@@ -17,12 +17,12 @@ import (
 	"time"
 
 	"github.com/mqtt-home/roborock-mqtt/config"
+	"github.com/mqtt-home/roborock-mqtt/integration/localmqtt"
 	loxonedirect "github.com/mqtt-home/roborock-mqtt/loxone/direct"
 	"github.com/mqtt-home/roborock-mqtt/roborock"
 	"github.com/mqtt-home/roborock-mqtt/version"
 	"github.com/mqtt-home/roborock-mqtt/web"
 	"github.com/philipparndt/go-logger"
-	"github.com/philipparndt/mqtt-gateway/mqtt"
 )
 
 var (
@@ -45,6 +45,9 @@ var (
 	capabilityStore       = roborock.NewCapabilityStore()
 	commandCoordinator    *roborock.CommandCoordinator
 	directSynchronizer    *loxonedirect.Synchronizer
+	localBroker           = localmqtt.New()
+	scheduleSignals       *roborock.SignalListener
+	integrationMu         sync.Mutex
 )
 
 func localMQTTEnabled() bool { return config.Get().MQTT.IsEnabled() }
@@ -71,6 +74,12 @@ func directLoxoneEnabledFor(slug string) bool {
 
 func loxoneMQTTEnabledFor(slug string) bool {
 	return localMQTTEnabledFor(slug) && config.Get().Loxone.Enabled
+}
+
+func publishLocalMQTT(topic string, payload any, retained bool) {
+	if err := localBroker.Publish(topic, payload, retained); err != nil {
+		logger.Warn("Local MQTT publish failed", "topic", topic, "error", err)
+	}
 }
 
 type mqttLoopbackProbe struct {
@@ -111,7 +120,9 @@ func (p *mqttLoopbackProbe) test(ctx context.Context) error {
 		delete(p.waiters, nonce)
 		p.mu.Unlock()
 	}()
-	mqtt.PublishAbsolute(loxoneTopic("_bridge", "diagnostic"), nonce, false)
+	if err := localBroker.Publish(loxoneTopic("_bridge", "diagnostic"), nonce, false); err != nil {
+		return err
+	}
 	select {
 	case <-channel:
 		return nil
@@ -126,7 +137,7 @@ func publishDeviceMap(slug string, pngData []byte) {
 	}
 	cfg := config.Get()
 	topic := cfg.MQTT.Topic + "/" + slug + "/map"
-	mqtt.PublishAbsolute(topic, pngData, cfg.MQTT.Retain)
+	publishLocalMQTT(topic, pngData, cfg.MQTT.Retain)
 	logger.Debug("Published map", "device", slug, "topic", topic, "size", len(pngData))
 }
 
@@ -143,7 +154,7 @@ func publishDeviceCurrentRoom(slug string, room *roborock.CurrentRoom) {
 		return
 	}
 
-	mqtt.PublishAbsolute(topic, string(data), cfg.MQTT.Retain)
+	publishLocalMQTT(topic, string(data), cfg.MQTT.Retain)
 	logger.Debug("Published current room", "device", slug, "topic", topic, "payload", string(data))
 }
 
@@ -196,7 +207,7 @@ func cleanupStaleRetainedTopics() {
 		return
 	}
 	for _, topic := range stale {
-		mqtt.PublishAbsolute(topic, "", true)
+		publishLocalMQTT(topic, "", true)
 		logger.Info("Cleared obsolete retained MQTT topic", "topic", topic)
 	}
 }
@@ -206,7 +217,7 @@ func publishLoxoneScalar(slug, suffix, payload string) {
 		return
 	}
 	topic := loxoneTopic(slug, suffix)
-	mqtt.PublishAbsolute(topic, payload, true)
+	publishLocalMQTT(topic, payload, true)
 	logger.Debug("Published Loxone scalar", "device", slug, "topic", topic, "payload", payload)
 }
 
@@ -227,9 +238,9 @@ func publishLoxoneActivities(slug string, activities []roborock.LoxoneActivity) 
 			continue
 		}
 		if loxoneMQTTEnabledFor(slug) {
-			mqtt.PublishAbsolute(loxoneTopic(slug, "activity"), string(data), false)
+			publishLocalMQTT(loxoneTopic(slug, "activity"), string(data), false)
 			if activity.Type == "command" {
-				mqtt.PublishAbsolute(loxoneTopic(slug, "last_command"), string(data), true)
+				publishLocalMQTT(loxoneTopic(slug, "last_command"), string(data), true)
 			}
 		}
 		loxoneDiagnostics.Record(slug, activity)
@@ -296,17 +307,8 @@ func wireLoxoneWeb(restClient *roborock.Client) {
 		RefreshRoom: func(slug string) {
 			refreshLoxoneCurrentRoom(slug, restClient)
 		},
-		DirectDiagnostics: func() loxonedirect.SyncDiagnostics {
-			if directSynchronizer == nil {
-				return loxonedirect.SyncDiagnostics{Inputs: []loxonedirect.InputDiagnostic{}}
-			}
-			return directSynchronizer.Diagnostics()
-		},
-		ResendDirect: func() {
-			if directSynchronizer != nil {
-				directSynchronizer.ResendAll()
-			}
-		},
+		DirectDiagnostics: directDiagnosticsSnapshot,
+		ResendDirect:      resendDirectSnapshots,
 		SubmitCommand: func(slug, command string) roborock.CommandSubmission {
 			if !directLoxoneEnabledFor(slug) {
 				return roborock.CommandSubmission{Command: command, State: "failed", Error: "Direct Loxone is disabled for this robot", Failure: "not_found"}
@@ -317,6 +319,177 @@ func wireLoxoneWeb(restClient *roborock.Client) {
 			return commandCoordinator.SubmitText(slug, command)
 		},
 		FindCommand: loxoneDiagnostics.FindCommand,
+	})
+}
+
+func directClientFromConfig(cfg config.DirectLoxoneConfig) (*loxonedirect.Client, error) {
+	return loxonedirect.NewClient(loxonedirect.ClientConfig{
+		Scheme: cfg.Scheme, Host: cfg.Host, Port: cfg.Port,
+		Username: cfg.Username, Password: cfg.Password,
+		Timeout: time.Duration(cfg.TimeoutSeconds) * time.Second,
+	})
+}
+
+func configureDirectLoxone() {
+	if directSynchronizer != nil {
+		directSynchronizer.Close()
+		directSynchronizer = nil
+	}
+	cfg := config.Get()
+	if !cfg.Loxone.Direct.Enabled {
+		return
+	}
+	directClient, err := directClientFromConfig(cfg.Loxone.Direct)
+	if err != nil {
+		logger.Error("Direct Loxone configuration is invalid", "error", err)
+		return
+	}
+	directSynchronizer = loxonedirect.NewSynchronizer(
+		directClient,
+		loxonedirect.InputMapping{Prefix: cfg.Loxone.Direct.InputPrefix, Overrides: cfg.Loxone.Direct.Inputs},
+		cfg.Loxone.Direct.MaxRetries,
+		time.Duration(cfg.Loxone.Direct.RetryDelayMS)*time.Millisecond,
+		func() []roborock.InternalDeviceState {
+			states := deviceStateStore.All()
+			filtered := make([]roborock.InternalDeviceState, 0, len(states))
+			for _, state := range states {
+				if directLoxoneEnabledFor(state.Slug) {
+					filtered = append(filtered, state)
+				}
+			}
+			return filtered
+		},
+	)
+	directSynchronizer.ResendAll()
+}
+
+func directDiagnosticsSnapshot() loxonedirect.SyncDiagnostics {
+	integrationMu.Lock()
+	defer integrationMu.Unlock()
+	if directSynchronizer == nil {
+		return loxonedirect.SyncDiagnostics{Inputs: []loxonedirect.InputDiagnostic{}}
+	}
+	return directSynchronizer.Diagnostics()
+}
+
+func resendDirectSnapshots() {
+	integrationMu.Lock()
+	defer integrationMu.Unlock()
+	if directSynchronizer != nil {
+		directSynchronizer.ResendAll()
+	}
+}
+
+func updateDirectState(state roborock.InternalDeviceState) {
+	integrationMu.Lock()
+	defer integrationMu.Unlock()
+	if directSynchronizer != nil && directLoxoneEnabledFor(state.Slug) {
+		directSynchronizer.Update(state)
+	}
+}
+
+func restoreLastCommandSubscriptions() {
+	if deviceManager == nil || !config.Get().Loxone.Enabled {
+		return
+	}
+	for _, device := range deviceManager.GetDevices() {
+		dev := device
+		if !loxoneMQTTEnabledFor(dev.Slug) {
+			continue
+		}
+		_ = localBroker.Subscribe(loxoneTopic(dev.Slug, "last_command"), func(_ string, payload []byte) {
+			var activity roborock.LoxoneActivity
+			if err := json.Unmarshal(payload, &activity); err == nil {
+				loxoneDiagnostics.RestoreLastCommand(dev.Slug, activity)
+			}
+		})
+	}
+}
+
+func republishLocalSnapshots() {
+	if deviceManager == nil || !localBroker.IsConnected() {
+		return
+	}
+	for _, state := range deviceStateStore.All() {
+		publishDeviceAvailability(state.Slug, state.Online)
+		publishLoxoneAvailability(state.Slug, state.Online)
+		if state.Status != nil {
+			publishDeviceStatus(state.Slug, state.Status)
+			publishLoxoneStatus(state.Slug, state.Status)
+		}
+		publishDeviceCurrentRoom(state.Slug, state.CurrentRoom)
+		publishLoxoneCurrentRoom(state.Slug, state.CurrentRoom)
+		if len(state.Scenes) > 0 {
+			publishDeviceScenes(state.Slug, state.Scenes)
+		}
+		if device := deviceManager.GetDevice(state.Slug); device != nil && device.GetMapPNG() != nil {
+			publishDeviceMap(state.Slug, device.GetMapPNG())
+		}
+	}
+}
+
+func configureLocalMQTT(restClient *roborock.Client) error {
+	localBroker.Stop()
+	localBroker.ClearSubscriptions()
+	if !localMQTTEnabled() {
+		return nil
+	}
+	if err := localBroker.Start(config.Get().MQTT); err != nil {
+		return err
+	}
+	_ = localBroker.Subscribe(loxoneTopic("_bridge", "diagnostic"), func(_ string, payload []byte) {
+		loxoneProbe.receive(payload)
+	})
+	if deviceManager != nil {
+		subscribeToCommands()
+		subscribeToLoxoneCommands(restClient)
+		restoreLastCommandSubscriptions()
+		cleanupStaleRetainedTopics()
+		republishLocalSnapshots()
+	}
+	if scheduleSignals != nil {
+		scheduleSignals.Subscribe()
+	}
+	return nil
+}
+
+func applyRuntimeSettings(restClient *roborock.Client, settings config.RuntimeSettings) error {
+	integrationMu.Lock()
+	defer integrationMu.Unlock()
+	if err := config.SaveRuntimeSettings(settings); err != nil {
+		return err
+	}
+	restClient.SetUsername(settings.RoborockUsername)
+	configureDirectLoxone()
+	if err := configureLocalMQTT(restClient); err != nil {
+		logger.Warn("Local MQTT reconfiguration failed; Direct Loxone remains available", "error", err)
+		return fmt.Errorf("save succeeded but local MQTT connection failed: %w", err)
+	}
+	return nil
+}
+
+func wireIntegrationSettings(restClient *roborock.Client) {
+	if webServer == nil {
+		return
+	}
+	webServer.SetIntegrationSettings(&web.IntegrationSettingsDependencies{
+		Apply:      func(settings config.RuntimeSettings) error { return applyRuntimeSettings(restClient, settings) },
+		MQTTStatus: localBroker.Diagnostics,
+		TestMQTT: func(ctx context.Context, mqttConfig config.MQTTConfig) error {
+			temporary := localmqtt.New()
+			if err := temporary.Start(mqttConfig); err != nil {
+				return err
+			}
+			defer temporary.Stop()
+			return temporary.Test(ctx, strings.TrimSuffix(mqttConfig.Topic, "/")+"/_bridge/setup-test")
+		},
+		TestDirect: func(ctx context.Context, directConfig config.DirectLoxoneConfig) error {
+			client, err := directClientFromConfig(directConfig)
+			if err != nil {
+				return err
+			}
+			return client.Test(ctx)
+		},
 	})
 }
 
@@ -375,7 +548,7 @@ func publishDeviceScenes(slug string, scenes []roborock.Scene) {
 		return
 	}
 
-	mqtt.PublishAbsolute(topic, string(data), cfg.MQTT.Retain)
+	publishLocalMQTT(topic, string(data), cfg.MQTT.Retain)
 	logger.Debug("Published scenes", "device", slug, "topic", topic, "count", len(scenes))
 }
 
@@ -392,7 +565,7 @@ func publishDeviceSchedule(slug string, state *roborock.ScheduleState) {
 		return
 	}
 
-	mqtt.PublishAbsolute(topic, string(data), cfg.MQTT.Retain)
+	publishLocalMQTT(topic, string(data), cfg.MQTT.Retain)
 	logger.Debug("Published schedule state", "device", slug, "topic", topic, "dayType", state.ActiveDay)
 }
 
@@ -411,7 +584,7 @@ func publishDeviceAvailability(slug string, online bool) {
 		payload = "online"
 	}
 	// Availability is always retained so late subscribers see the current state.
-	mqtt.PublishAbsolute(topic, payload, true)
+	publishLocalMQTT(topic, payload, true)
 	logger.Debug("Published availability", "device", slug, "topic", topic, "state", payload)
 }
 
@@ -428,7 +601,7 @@ func publishDeviceStatus(slug string, status *roborock.PublishedStatus) {
 		return
 	}
 
-	mqtt.PublishAbsolute(topic, string(data), cfg.MQTT.Retain)
+	publishLocalMQTT(topic, string(data), cfg.MQTT.Retain)
 	logger.Debug("Published status", "device", slug, "topic", topic)
 }
 
@@ -447,7 +620,7 @@ func subscribeToCommands() {
 
 		logger.Info("Subscribing to MQTT commands", "device", dev.Slug, "topic", topic)
 
-		mqtt.Subscribe(topic, func(topic string, payload []byte) {
+		_ = localBroker.Subscribe(topic, func(topic string, payload []byte) {
 			logger.Debug("Received MQTT command", "device", dev.Slug, "topic", topic, "payload", string(payload))
 
 			var cmd struct {
@@ -489,8 +662,8 @@ func subscribeToLoxoneCommands(restClient *roborock.Client) {
 		logger.Info("Subscribing to Loxone MQTT commands", "device", dev.Slug, "topic", topic)
 		// Delete a retained command before subscribing. The MQTT gateway callback
 		// does not expose the retained flag, so this prevents replay after restart.
-		mqtt.PublishAbsolute(topic, "", true)
-		mqtt.Subscribe(topic, func(topic string, payload []byte) {
+		publishLocalMQTT(topic, "", true)
+		_ = localBroker.Subscribe(topic, func(topic string, payload []byte) {
 			logger.Debug("Received Loxone MQTT command", "device", dev.Slug, "topic", topic, "payload", string(payload))
 			commandCoordinator.SubmitText(dev.Slug, string(payload))
 		})
@@ -563,23 +736,10 @@ func executeCommand(dev *roborock.ManagedDevice, action string, segments []int, 
 // startBridge initializes the MQTT bridge after successful authentication.
 func startBridge(restClient *roborock.Client) {
 	cfg := config.Get()
-	if directSynchronizer != nil {
-		directSynchronizer.Close()
-		directSynchronizer = nil
-	}
 	if store, err := roborock.NewLoxoneRoomOverrideStore(dataDir); err != nil {
 		logger.Error("Failed to load Loxone room overrides", "error", err)
 	} else {
 		loxoneRoomOverrides = store
-	}
-
-	// The local/home-automation MQTT adapter is optional. Roborock Cloud MQTT
-	// is created independently by DeviceManager.ConnectAll below.
-	if localMQTTEnabled() {
-		mqtt.Start(cfg.MQTT.GatewayConfig(), "roborock_mqtt")
-		mqtt.Subscribe(loxoneTopic("_bridge", "diagnostic"), func(_ string, payload []byte) {
-			loxoneProbe.receive(payload)
-		})
 	}
 
 	// Initialize maintenance checker
@@ -604,39 +764,10 @@ func startBridge(restClient *roborock.Client) {
 		publishLoxoneActivities,
 	)
 	loxoneActivityTracker = commandCoordinator.Tracker()
-	if cfg.Loxone.Direct.Enabled {
-		directClient, err := loxonedirect.NewClient(loxonedirect.ClientConfig{
-			Scheme: cfg.Loxone.Direct.Scheme, Host: cfg.Loxone.Direct.Host, Port: cfg.Loxone.Direct.Port,
-			Username: cfg.Loxone.Direct.Username, Password: cfg.Loxone.Direct.Password,
-			Timeout: time.Duration(cfg.Loxone.Direct.TimeoutSeconds) * time.Second,
-		})
-		if err != nil {
-			logger.Error("Direct Loxone configuration is invalid", "error", err)
-		} else {
-			directSynchronizer = loxonedirect.NewSynchronizer(
-				directClient,
-				loxonedirect.InputMapping{Prefix: cfg.Loxone.Direct.InputPrefix, Overrides: cfg.Loxone.Direct.Inputs},
-				cfg.Loxone.Direct.MaxRetries,
-				time.Duration(cfg.Loxone.Direct.RetryDelayMS)*time.Millisecond,
-				func() []roborock.InternalDeviceState {
-					states := deviceStateStore.All()
-					filtered := states[:0]
-					for _, state := range states {
-						if directLoxoneEnabledFor(state.Slug) {
-							filtered = append(filtered, state)
-						}
-					}
-					return filtered
-				},
-			)
-		}
-	}
 
 	deviceStateStore.Subscribe(func(update roborock.DeviceStateUpdate) {
 		state := update.State
-		if directSynchronizer != nil && directLoxoneEnabledFor(state.Slug) {
-			directSynchronizer.Update(state)
-		}
+		updateDirectState(state)
 		switch update.Change {
 		case roborock.DeviceStateStatus:
 			publishDeviceStatus(state.Slug, state.Status)
@@ -694,6 +825,10 @@ func startBridge(restClient *roborock.Client) {
 		capabilities := capabilityStore.UpdateInventory(slug, mappings, roomsKnown, scenes, scenesKnown, time.Now())
 		deviceStateStore.UpdateInventory(slug, mappings, scenes, capabilities, time.Now())
 	})
+	configureDirectLoxone()
+	if err := configureLocalMQTT(restClient); err != nil {
+		logger.Error("Failed to start local MQTT integration; continuing without it", "error", err)
+	}
 
 	// Seed a retained `offline` for every device before connecting, so the
 	// availability topic is never absent and consumers start from a safe default.
@@ -718,23 +853,6 @@ func startBridge(restClient *roborock.Client) {
 	// Initial poll
 	deviceManager.PollAll()
 
-	// Subscribe to local MQTT commands per device
-	subscribeToCommands()
-	subscribeToLoxoneCommands(restClient)
-	if localMQTTEnabled() && cfg.Loxone.Enabled {
-		for _, device := range deviceManager.GetDevices() {
-			dev := device
-			if !loxoneMQTTEnabledFor(dev.Slug) {
-				continue
-			}
-			mqtt.Subscribe(loxoneTopic(dev.Slug, "last_command"), func(_ string, payload []byte) {
-				var activity roborock.LoxoneActivity
-				if err := json.Unmarshal(payload, &activity); err == nil {
-					loxoneDiagnostics.RestoreLastCommand(dev.Slug, activity)
-				}
-			})
-		}
-	}
 	wireLoxoneWeb(restClient)
 
 	// Start polling
@@ -745,15 +863,16 @@ func startBridge(restClient *roborock.Client) {
 	notAtHomeStore = roborock.NewNotAtHomeStore(dataDir)
 	scheduleStore = roborock.NewScheduleStore(dataDir)
 
-	signals := roborock.NewSignalListener(
+	scheduleSignals = roborock.NewSignalListener(
 		cfg.Roborock.ScheduleSignals.PublicHoliday,
 		cfg.Roborock.ScheduleSignals.Vacation,
+		func(topic string, handler func(string, []byte)) error { return localBroker.Subscribe(topic, handler) },
 	)
 	if localMQTTEnabled() {
-		signals.Subscribe()
+		scheduleSignals.Subscribe()
 	}
 
-	scheduleEngine = roborock.NewScheduleEngine(cfg.Roborock.Schedules, scheduleStore, deviceManager, signals, notAtHomeStore)
+	scheduleEngine = roborock.NewScheduleEngine(cfg.Roborock.Schedules, scheduleStore, deviceManager, scheduleSignals, notAtHomeStore)
 
 	scheduleCallback := func(slug string, state *roborock.ScheduleState) {
 		publishDeviceSchedule(slug, state)
@@ -761,7 +880,7 @@ func startBridge(restClient *roborock.Client) {
 	scheduleEngine.SetStateChangeCallback(scheduleCallback)
 	scheduleEngine.SetActionCallback(scheduleCallback)
 
-	signals.SetOnChange(func() {
+	scheduleSignals.SetOnChange(func() {
 		scheduleEngine.CheckDayTypeChanges()
 	})
 
@@ -838,6 +957,7 @@ func main() {
 		}
 	})
 	wireLoxoneWeb(restClient)
+	wireIntegrationSettings(restClient)
 
 	// Wire schedule engine to web server if bridge already started
 	if scheduleEngine != nil {
@@ -884,6 +1004,7 @@ func main() {
 	if directSynchronizer != nil {
 		directSynchronizer.Close()
 	}
+	localBroker.Stop()
 	logger.Info("Shutdown complete")
 }
 

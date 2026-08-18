@@ -58,6 +58,12 @@ func (c *Client) SetSessionDir(dir string) {
 	c.sessionDir = dir
 }
 
+// SetUsername updates the Roborock login identifier used by the setup wizard.
+// It deliberately does not alter an existing cloud session.
+func (c *Client) SetUsername(username string) {
+	c.username = strings.TrimSpace(username)
+}
+
 func (c *Client) sessionFile() string {
 	if c.sessionDir == "" {
 		return ""

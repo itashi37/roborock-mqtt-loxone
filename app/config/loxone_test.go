@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,6 +41,42 @@ func TestLoadConfigLoxoneDefaults(t *testing.T) {
 	}
 }
 
+func TestRuntimeSettingsPersistWithOwnerOnlyPermissions(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(file, []byte(`{"mqtt":{"enabled":false},"roborock":{},"web":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(file); err != nil {
+		t.Fatal(err)
+	}
+	complete, mqttEnabled := true, false
+	settings := RuntimeSettings{
+		MQTT:             MQTTConfig{Enabled: &mqttEnabled, Password: "mqtt-secret"},
+		Loxone:           LoxoneConfig{Direct: DirectLoxoneConfig{Enabled: true, Host: "192.168.1.10", Password: "loxone-secret", APIToken: "token-secret"}},
+		RoborockUsername: "owner@example.com", SetupComplete: &complete,
+	}
+	if err := SaveRuntimeSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, runtimeSettingsFile)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("settings permissions = %o, want 600", got)
+	}
+	var persisted RuntimeSettings
+	data, _ := os.ReadFile(path)
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.MQTT.Password != "mqtt-secret" || persisted.Loxone.Direct.APIToken != "token-secret" || !SetupComplete() {
+		t.Fatalf("unexpected persisted settings: %+v", persisted)
+	}
+}
+
 func TestLoadConfigCanDisableLocalMQTT(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "config.json")
 	data := []byte(`{
@@ -57,7 +94,7 @@ func TestLoadConfigCanDisableLocalMQTT(t *testing.T) {
 	if loaded.MQTT.IsEnabled() {
 		t.Fatal("expected local MQTT to be disabled")
 	}
-	if got := loaded.MQTT.GatewayConfig().URL; got != "tcp://localhost:1883" {
+	if got := loaded.MQTT.URL; got != "tcp://localhost:1883" {
 		t.Fatalf("gateway URL = %q", got)
 	}
 }

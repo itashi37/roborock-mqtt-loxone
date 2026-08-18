@@ -2,14 +2,29 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/philipparndt/go-logger"
-	"github.com/philipparndt/mqtt-gateway/config"
 )
 
 var cfg Config
+var cfgMu sync.RWMutex
+var loadedConfigFile string
+var envVariablePattern = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+const runtimeSettingsFile = "integration-settings.json"
+
+type RuntimeSettings struct {
+	MQTT             MQTTConfig   `json:"mqtt"`
+	Loxone           LoxoneConfig `json:"loxone"`
+	RoborockUsername string       `json:"roborock_username,omitempty"`
+	SetupComplete    *bool        `json:"setup_complete,omitempty"`
+}
 
 type Config struct {
 	MQTT          MQTTConfig         `json:"mqtt"`
@@ -31,17 +46,11 @@ type MQTTConfig struct {
 	QoS      byte   `json:"qos"`
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
+	TLS      bool   `json:"tls,omitempty"`
 }
 
 func (m MQTTConfig) IsEnabled() bool {
 	return m.Enabled == nil || *m.Enabled
-}
-
-func (m MQTTConfig) GatewayConfig() config.MQTTConfig {
-	return config.MQTTConfig{
-		URL: m.URL, Retain: m.Retain, Topic: m.Topic, QoS: m.QoS,
-		Username: m.Username, Password: m.Password,
-	}
 }
 
 type LoxoneConfig struct {
@@ -179,14 +188,42 @@ func LoadConfig(file string) (Config, error) {
 		return Config{}, err
 	}
 
-	data = config.ReplaceEnvVariables(data)
+	data = envVariablePattern.ReplaceAllFunc(data, func(match []byte) []byte {
+		return []byte(os.Getenv(string(match[2 : len(match)-1])))
+	})
 
-	err = json.Unmarshal(data, &cfg)
+	var loaded Config
+	err = json.Unmarshal(data, &loaded)
 	if err != nil {
 		logger.Error("Unmarshaling JSON", "error", err)
 		return Config{}, err
 	}
+	settingsFile := filepath.Join(filepath.Dir(file), runtimeSettingsFile)
+	if settingsData, readErr := os.ReadFile(settingsFile); readErr == nil {
+		settingsData = envVariablePattern.ReplaceAllFunc(settingsData, func(match []byte) []byte {
+			return []byte(os.Getenv(string(match[2 : len(match)-1])))
+		})
+		var settings RuntimeSettings
+		if decodeErr := json.Unmarshal(settingsData, &settings); decodeErr != nil {
+			return Config{}, fmt.Errorf("parse runtime integration settings: %w", decodeErr)
+		}
+		loaded.MQTT = settings.MQTT
+		loaded.Loxone = settings.Loxone
+		if strings.TrimSpace(settings.RoborockUsername) != "" {
+			loaded.Roborock.Username = settings.RoborockUsername
+		}
+	} else if !os.IsNotExist(readErr) {
+		return Config{}, fmt.Errorf("read runtime integration settings: %w", readErr)
+	}
+	applyDefaults(&loaded)
+	cfgMu.Lock()
+	cfg = loaded
+	loadedConfigFile = file
+	cfgMu.Unlock()
+	return loaded, nil
+}
 
+func applyDefaults(cfg *Config) {
 	if cfg.LogLevel == "" {
 		cfg.LogLevel = "info"
 	}
@@ -276,9 +313,64 @@ func LoadConfig(file string) (Config, error) {
 		cfg.Notifications.Email.SMTPPort = 587
 	}
 
-	return cfg, nil
 }
 
 func Get() Config {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
 	return cfg
+}
+
+func SaveRuntimeSettings(settings RuntimeSettings) error {
+	cfgMu.Lock()
+	defer cfgMu.Unlock()
+	if loadedConfigFile == "" {
+		return fmt.Errorf("configuration has not been loaded")
+	}
+	if strings.TrimSpace(settings.RoborockUsername) == "" {
+		settings.RoborockUsername = cfg.Roborock.Username
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal runtime integration settings: %w", err)
+	}
+	path := filepath.Join(filepath.Dir(loadedConfigFile), runtimeSettingsFile)
+	temporary := path + ".tmp"
+	if err := os.WriteFile(temporary, append(data, '\n'), 0600); err != nil {
+		return fmt.Errorf("write runtime integration settings: %w", err)
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		return fmt.Errorf("replace runtime integration settings: %w", err)
+	}
+	cfg.MQTT = settings.MQTT
+	cfg.Loxone = settings.Loxone
+	cfg.Roborock.Username = settings.RoborockUsername
+	applyDefaults(&cfg)
+	return nil
+}
+
+func RuntimeSettingsSnapshot() RuntimeSettings {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+	settings := RuntimeSettings{MQTT: cfg.MQTT, Loxone: cfg.Loxone, RoborockUsername: cfg.Roborock.Username}
+	if loadedConfigFile != "" {
+		data, err := os.ReadFile(filepath.Join(filepath.Dir(loadedConfigFile), runtimeSettingsFile))
+		if err == nil {
+			var persisted RuntimeSettings
+			if json.Unmarshal(data, &persisted) == nil {
+				settings.SetupComplete = persisted.SetupComplete
+			}
+		}
+	}
+	return settings
+}
+
+// SetupComplete preserves backward compatibility: installations configured
+// before the browser wizard are considered complete when an account exists.
+func SetupComplete() bool {
+	settings := RuntimeSettingsSnapshot()
+	if settings.SetupComplete != nil {
+		return *settings.SetupComplete
+	}
+	return strings.TrimSpace(settings.RoborockUsername) != ""
 }
