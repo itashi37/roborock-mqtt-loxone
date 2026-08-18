@@ -33,6 +33,7 @@ type LoxoneDependencies struct {
 	Core           *roborock.LoxoneCoreStore
 	Diagnostics    *roborock.LoxoneDiagnosticStore
 	RoomOverrides  *roborock.LoxoneRoomOverrideStore
+	Capabilities   *roborock.CapabilityStore
 	PublishCommand func(slug, command string) error
 	TestMQTT       func(context.Context) error
 	RefreshRoom    func(slug string)
@@ -56,15 +57,16 @@ type loxoneIntegrationResponse struct {
 }
 
 type loxoneRobotResponse struct {
-	Slug        string                     `json:"slug"`
-	Name        string                     `json:"name"`
-	Model       string                     `json:"model"`
-	Online      bool                       `json:"online"`
-	Core        roborock.LoxoneCore        `json:"core"`
-	Topics      loxoneTopics               `json:"topics"`
-	Rooms       []loxoneRoomResponse       `json:"rooms"`
-	Scenes      []loxoneSceneResponse      `json:"scenes"`
-	Diagnostics roborock.LoxoneDiagnostics `json:"diagnostics"`
+	Slug         string                      `json:"slug"`
+	Name         string                      `json:"name"`
+	Model        string                      `json:"model"`
+	Online       bool                        `json:"online"`
+	Core         roborock.LoxoneCore         `json:"core"`
+	Topics       loxoneTopics                `json:"topics"`
+	Rooms        []loxoneRoomResponse        `json:"rooms"`
+	Scenes       []loxoneSceneResponse       `json:"scenes"`
+	Diagnostics  roborock.LoxoneDiagnostics  `json:"diagnostics"`
+	Capabilities roborock.DeviceCapabilities `json:"capabilities"`
 }
 
 type loxoneTopics struct {
@@ -155,6 +157,9 @@ func (ws *WebServer) buildLoxoneRobot(device *roborock.ManagedDevice) loxoneRobo
 		}
 		if dependencies.Diagnostics != nil {
 			robot.Diagnostics = dependencies.Diagnostics.Snapshot(device.Slug)
+		}
+		if dependencies.Capabilities != nil {
+			robot.Capabilities = dependencies.Capabilities.Get(device.Slug)
 		}
 	}
 	robot.Rooms = ws.loxoneRooms(device)

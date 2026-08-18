@@ -12,12 +12,36 @@ import (
 var cfg Config
 
 type Config struct {
-	MQTT          config.MQTTConfig  `json:"mqtt"`
+	MQTT          MQTTConfig         `json:"mqtt"`
 	Roborock      RoborockConfig     `json:"roborock"`
 	Loxone        LoxoneConfig       `json:"loxone,omitempty"`
 	Web           WebConfig          `json:"web"`
 	Notifications NotificationConfig `json:"notifications,omitempty"`
 	LogLevel      string             `json:"loglevel,omitempty"`
+}
+
+// MQTTConfig controls the optional local/home-automation MQTT adapter. Enabled
+// is a pointer so existing configurations that predate integration modes keep
+// their historical behaviour (enabled by default).
+type MQTTConfig struct {
+	Enabled  *bool  `json:"enabled,omitempty"`
+	URL      string `json:"url"`
+	Retain   bool   `json:"retain"`
+	Topic    string `json:"topic"`
+	QoS      byte   `json:"qos"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+}
+
+func (m MQTTConfig) IsEnabled() bool {
+	return m.Enabled == nil || *m.Enabled
+}
+
+func (m MQTTConfig) GatewayConfig() config.MQTTConfig {
+	return config.MQTTConfig{
+		URL: m.URL, Retain: m.Retain, Topic: m.Topic, QoS: m.QoS,
+		Username: m.Username, Password: m.Password,
+	}
 }
 
 type LoxoneConfig struct {

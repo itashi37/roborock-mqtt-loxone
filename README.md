@@ -80,6 +80,7 @@ Create a `config.json` file:
 ```json
 {
   "mqtt": {
+    "enabled": true,
     "url": "tcp://localhost:1883",
     "topic": "home/roborock",
     "qos": 2,
@@ -107,6 +108,16 @@ Create a `config.json` file:
 ```
 
 Environment variables can be used in the config file with `${VAR_NAME}` syntax.
+
+`mqtt.enabled` controls only the local home-automation broker. It defaults to
+`true` when omitted so existing installations keep the same behaviour. Setting
+it to `false` lets the Roborock bridge and Web UI run without Mosquitto; the
+separate Roborock Cloud MQTT connection used to communicate with the robots is
+still started normally. Direct Loxone transport is added in the next phase.
+
+External robot slugs are persisted by Roborock DUID in `device-slugs.json`
+inside the data volume. Renaming or reordering robots therefore no longer
+changes their MQTT topics or API paths.
 
 ### Schedules
 

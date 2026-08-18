@@ -40,7 +40,16 @@ var (
 	loxoneRoomOverrides   *roborock.LoxoneRoomOverrideStore
 	loxoneProbe           = newMQTTLoopbackProbe()
 	loxonePublishMu       sync.Mutex
+	deviceStateStore      = roborock.NewDeviceStateStore()
+	capabilityStore       = roborock.NewCapabilityStore()
+	commandCoordinator    *roborock.CommandCoordinator
 )
+
+func localMQTTEnabled() bool { return config.Get().MQTT.IsEnabled() }
+
+func loxoneMQTTEnabled() bool {
+	return localMQTTEnabled() && config.Get().Loxone.Enabled
+}
 
 type mqttLoopbackProbe struct {
 	mu      sync.Mutex
@@ -63,6 +72,9 @@ func (p *mqttLoopbackProbe) receive(payload []byte) {
 }
 
 func (p *mqttLoopbackProbe) test(ctx context.Context) error {
+	if !localMQTTEnabled() {
+		return fmt.Errorf("local MQTT integration is disabled")
+	}
 	buffer := make([]byte, 16)
 	if _, err := rand.Read(buffer); err != nil {
 		return fmt.Errorf("generate MQTT test nonce: %w", err)
@@ -87,6 +99,9 @@ func (p *mqttLoopbackProbe) test(ctx context.Context) error {
 }
 
 func publishDeviceMap(slug string, pngData []byte) {
+	if !localMQTTEnabled() {
+		return
+	}
 	cfg := config.Get()
 	topic := cfg.MQTT.Topic + "/" + slug + "/map"
 	mqtt.PublishAbsolute(topic, pngData, cfg.MQTT.Retain)
@@ -94,6 +109,9 @@ func publishDeviceMap(slug string, pngData []byte) {
 }
 
 func publishDeviceCurrentRoom(slug string, room *roborock.CurrentRoom) {
+	if !localMQTTEnabled() {
+		return
+	}
 	cfg := config.Get()
 	topic := cfg.MQTT.Topic + "/" + slug + "/current_room"
 
@@ -113,7 +131,7 @@ func loxoneTopic(slug, suffix string) string {
 }
 
 func publishLoxoneScalar(slug, suffix, payload string) {
-	if !config.Get().Loxone.Enabled {
+	if !loxoneMQTTEnabled() {
 		return
 	}
 	topic := loxoneTopic(slug, suffix)
@@ -131,18 +149,17 @@ func publishLoxoneCore(slug string, core roborock.LoxoneCore) {
 }
 
 func publishLoxoneActivities(slug string, activities []roborock.LoxoneActivity) {
-	if !config.Get().Loxone.Enabled {
-		return
-	}
 	for _, activity := range activities {
 		data, err := roborock.MarshalLoxoneActivity(activity)
 		if err != nil {
 			logger.Error("Failed to marshal Loxone activity", "device", slug, "error", err)
 			continue
 		}
-		mqtt.PublishAbsolute(loxoneTopic(slug, "activity"), string(data), false)
-		if activity.Type == "command" {
-			mqtt.PublishAbsolute(loxoneTopic(slug, "last_command"), string(data), true)
+		if loxoneMQTTEnabled() {
+			mqtt.PublishAbsolute(loxoneTopic(slug, "activity"), string(data), false)
+			if activity.Type == "command" {
+				mqtt.PublishAbsolute(loxoneTopic(slug, "last_command"), string(data), true)
+			}
 		}
 		loxoneDiagnostics.Record(slug, activity)
 		if webServer != nil {
@@ -179,8 +196,7 @@ func refreshLoxoneCurrentRoom(slug string, restClient *roborock.Client) {
 		logger.Warn("Failed to refresh Loxone current room", "device", slug, "error", err)
 		return
 	}
-	publishDeviceCurrentRoom(slug, room)
-	publishLoxoneCurrentRoom(slug, room)
+	deviceStateStore.UpdateCurrentRoom(slug, room, time.Now())
 }
 
 func wireLoxoneWeb(restClient *roborock.Client) {
@@ -191,14 +207,18 @@ func wireLoxoneWeb(restClient *roborock.Client) {
 		Core:          loxoneCoreStore,
 		Diagnostics:   loxoneDiagnostics,
 		RoomOverrides: loxoneRoomOverrides,
+		Capabilities:  capabilityStore,
 		PublishCommand: func(slug, command string) error {
 			if !config.Get().Loxone.Enabled {
 				return fmt.Errorf("Loxone mode is disabled")
 			}
-			if deviceManager == nil || deviceManager.GetDevice(slug) == nil {
-				return fmt.Errorf("unknown robot %q", slug)
+			if commandCoordinator == nil {
+				return fmt.Errorf("command coordinator is not ready")
 			}
-			mqtt.PublishAbsolute(loxoneTopic(slug, "command"), command, false)
+			result := commandCoordinator.SubmitText(slug, command)
+			if result.State == "failed" {
+				return fmt.Errorf("%s", result.Error)
+			}
 			return nil
 		},
 		TestMQTT: loxoneProbe.test,
@@ -215,9 +235,6 @@ func publishLoxoneActivity(slug string, activity *roborock.LoxoneActivity) {
 }
 
 func publishLoxoneStatus(slug string, status *roborock.PublishedStatus) {
-	if !config.Get().Loxone.Enabled {
-		return
-	}
 	loxonePublishMu.Lock()
 	defer loxonePublishMu.Unlock()
 
@@ -229,9 +246,6 @@ func publishLoxoneStatus(slug string, status *roborock.PublishedStatus) {
 }
 
 func publishLoxoneAvailability(slug string, online bool) {
-	if !config.Get().Loxone.Enabled {
-		return
-	}
 	loxonePublishMu.Lock()
 	defer loxonePublishMu.Unlock()
 
@@ -247,9 +261,6 @@ func publishLoxoneAvailability(slug string, online bool) {
 }
 
 func publishLoxoneCurrentRoom(slug string, room *roborock.CurrentRoom) {
-	if !config.Get().Loxone.Enabled {
-		return
-	}
 	loxonePublishMu.Lock()
 	defer loxonePublishMu.Unlock()
 
@@ -260,6 +271,9 @@ func publishLoxoneCurrentRoom(slug string, room *roborock.CurrentRoom) {
 }
 
 func publishDeviceScenes(slug string, scenes []roborock.Scene) {
+	if !localMQTTEnabled() {
+		return
+	}
 	cfg := config.Get()
 	topic := cfg.MQTT.Topic + "/" + slug + "/scenes"
 
@@ -274,6 +288,9 @@ func publishDeviceScenes(slug string, scenes []roborock.Scene) {
 }
 
 func publishDeviceSchedule(slug string, state *roborock.ScheduleState) {
+	if !localMQTTEnabled() {
+		return
+	}
 	cfg := config.Get()
 	topic := cfg.MQTT.Topic + "/" + slug + "/schedule"
 
@@ -292,6 +309,9 @@ func publishDeviceSchedule(slug string, state *roborock.ScheduleState) {
 // (e.g. the wall-display Wall API) use this to mark a device unavailable rather
 // than trust a stale retained `<topic>/<slug>/status`.
 func publishDeviceAvailability(slug string, online bool) {
+	if !localMQTTEnabled() {
+		return
+	}
 	cfg := config.Get()
 	topic := cfg.MQTT.Topic + "/" + slug + "/availability"
 	payload := "offline"
@@ -304,6 +324,9 @@ func publishDeviceAvailability(slug string, online bool) {
 }
 
 func publishDeviceStatus(slug string, status *roborock.PublishedStatus) {
+	if !localMQTTEnabled() {
+		return
+	}
 	cfg := config.Get()
 	topic := cfg.MQTT.Topic + "/" + slug + "/status"
 
@@ -318,6 +341,9 @@ func publishDeviceStatus(slug string, status *roborock.PublishedStatus) {
 }
 
 func subscribeToCommands() {
+	if !localMQTTEnabled() || commandCoordinator == nil {
+		return
+	}
 	cfg := config.Get()
 
 	for _, md := range deviceManager.GetDevices() {
@@ -328,11 +354,6 @@ func subscribeToCommands() {
 
 		mqtt.Subscribe(topic, func(topic string, payload []byte) {
 			logger.Debug("Received MQTT command", "device", dev.Slug, "topic", topic, "payload", string(payload))
-
-			if dev.CloudMQTT == nil {
-				logger.Warn("Device not connected, ignoring command", "device", dev.Slug)
-				return
-			}
 
 			var cmd struct {
 				Action   string `json:"action"`
@@ -347,15 +368,19 @@ func subscribeToCommands() {
 				logger.Error("Failed to parse command", "error", err)
 				return
 			}
-
-			go dispatchCommand(dev, cmd.Action, cmd.Segments, cmd.Speed, cmd.Mode, cmd.Level, cmd.SceneID)
+			parsed := roborock.LoxoneCommand{Action: cmd.Action, Segments: cmd.Segments, Speed: cmd.Speed, Mode: cmd.Mode, Level: cmd.Level, SceneID: cmd.SceneID}
+			context, ok := commandContextForSlug(dev.Slug, nil)
+			if !ok {
+				logger.Warn("Unknown device for MQTT command", "device", dev.Slug)
+				return
+			}
+			commandCoordinator.SubmitParsed(context, string(payload), parsed, nil)
 		})
 	}
 }
 
 func subscribeToLoxoneCommands(restClient *roborock.Client) {
-	cfg := config.Get()
-	if !cfg.Loxone.Enabled {
+	if !loxoneMQTTEnabled() || commandCoordinator == nil {
 		return
 	}
 
@@ -369,35 +394,31 @@ func subscribeToLoxoneCommands(restClient *roborock.Client) {
 		mqtt.PublishAbsolute(topic, "", true)
 		mqtt.Subscribe(topic, func(topic string, payload []byte) {
 			logger.Debug("Received Loxone MQTT command", "device", dev.Slug, "topic", topic, "payload", string(payload))
-
-			roomNames := loxoneRoomNames(dev, restClient)
-			cmd, parseErr := roborock.ParseLoxoneCommand(string(payload), roomNames, dev.Scenes)
-			online := dev.CloudMQTT != nil && dev.CloudMQTT.IsConnected()
-			decision := loxoneActivityTracker.BeginCommand(dev.Slug, string(payload), cmd, parseErr, online, time.Now())
-			publishLoxoneActivities(dev.Slug, decision.Activities)
-			if !decision.Dispatch {
-				return
-			}
-
-			time.AfterFunc(time.Duration(cfg.Loxone.CommandTimeoutSeconds)*time.Second, func() {
-				publishLoxoneActivity(dev.Slug, loxoneActivityTracker.ExpireCommand(dev.Slug, decision.ID, time.Now()))
-			})
-			go func() {
-				if err := executeCommand(dev, cmd.Action, cmd.Segments, cmd.Speed, cmd.Mode, "", cmd.SceneID); err != nil {
-					logger.Error("Loxone command failed", "device", dev.Slug, "action", cmd.Action, "error", err)
-					publishLoxoneActivity(dev.Slug, loxoneActivityTracker.MarkFailed(dev.Slug, decision.ID, err.Error(), time.Now()))
-					return
-				}
-				publishLoxoneActivity(dev.Slug, loxoneActivityTracker.MarkRunning(dev.Slug, decision.ID, time.Now()))
-			}()
+			commandCoordinator.SubmitText(dev.Slug, string(payload))
 		})
 	}
 }
 
-func dispatchCommand(dev *roborock.ManagedDevice, action string, segments []int, speed, mode, level string, sceneID int) {
-	if err := executeCommand(dev, action, segments, speed, mode, level, sceneID); err != nil {
-		logger.Error("Command failed", "device", dev.Slug, "action", action, "error", err)
+func commandContextForSlug(slug string, restClient *roborock.Client) (roborock.CommandContext, bool) {
+	if deviceManager == nil {
+		return roborock.CommandContext{}, false
 	}
+	dev := deviceManager.GetDevice(slug)
+	if dev == nil {
+		return roborock.CommandContext{}, false
+	}
+	if restClient == nil {
+		restClient = deviceManager.RESTClient()
+	}
+	roomNames := map[string]string{}
+	if restClient != nil {
+		roomNames = loxoneRoomNames(dev, restClient)
+	}
+	scenes, _ := dev.GetScenes()
+	return roborock.CommandContext{
+		Slug: slug, Online: dev.CloudMQTT != nil && dev.CloudMQTT.IsConnected(),
+		RoomNames: roomNames, Scenes: scenes, Capabilities: capabilityStore.Get(slug),
+	}, true
 }
 
 func executeCommand(dev *roborock.ManagedDevice, action string, segments []int, speed, mode, level string, sceneID int) (err error) {
@@ -444,42 +465,79 @@ func executeCommand(dev *roborock.ManagedDevice, action string, segments []int, 
 // startBridge initializes the MQTT bridge after successful authentication.
 func startBridge(restClient *roborock.Client) {
 	cfg := config.Get()
-	loxoneActivityTracker = roborock.NewLoxoneActivityTracker(time.Duration(cfg.Loxone.CommandDebounceMS) * time.Millisecond)
 	if store, err := roborock.NewLoxoneRoomOverrideStore(dataDir); err != nil {
 		logger.Error("Failed to load Loxone room overrides", "error", err)
 	} else {
 		loxoneRoomOverrides = store
 	}
 
-	// Start local MQTT
-	mqtt.Start(cfg.MQTT, "roborock_mqtt")
-	mqtt.Subscribe(loxoneTopic("_bridge", "diagnostic"), func(_ string, payload []byte) {
-		loxoneProbe.receive(payload)
-	})
+	// The local/home-automation MQTT adapter is optional. Roborock Cloud MQTT
+	// is created independently by DeviceManager.ConnectAll below.
+	if localMQTTEnabled() {
+		mqtt.Start(cfg.MQTT.GatewayConfig(), "roborock_mqtt")
+		mqtt.Subscribe(loxoneTopic("_bridge", "diagnostic"), func(_ string, payload []byte) {
+			loxoneProbe.receive(payload)
+		})
+	}
 
 	// Initialize maintenance checker
 	maintenanceChecker = roborock.NewMaintenanceChecker(dataDir)
 
 	// Create device manager for all devices
 	deviceManager = roborock.NewDeviceManager(restClient.GetLoginData(), restClient.GetDevices(), restClient, dataDir)
-	deviceManager.SetStatusCallback(func(slug string, status *roborock.PublishedStatus) {
-		publishDeviceStatus(slug, status)
-		publishLoxoneStatus(slug, status)
-		if cfg.Loxone.Enabled {
-			publishLoxoneActivities(slug, loxoneActivityTracker.UpdateStatus(slug, status, time.Now()))
-		}
-		// Push live status (including the cleaning ETA) to connected web clients.
-		if webServer != nil {
-			webServer.BroadcastDeviceStatus(slug, status)
-		}
-		// Check maintenance thresholds — only when consumable data was actually fetched
-		// (if ALL values are zero, the poll likely failed)
-		c := status.Consumables
-		if c.MainBrushWorkTime > 0 || c.SideBrushWorkTime > 0 || c.FilterWorkTime > 0 || c.SensorDirtyTime > 0 || c.DustCollectionWorkTimes > 0 {
-			if dev := deviceManager.GetDevice(slug); dev != nil {
-				maintenanceChecker.Check(dev.Info.Name, &status.ConsumablePercents, &status.Consumables)
+	deviceStateStore = roborock.NewDeviceStateStore()
+	capabilityStore = roborock.NewCapabilityStore()
+	commandCoordinator = roborock.NewCommandCoordinator(
+		time.Duration(cfg.Loxone.CommandDebounceMS)*time.Millisecond,
+		time.Duration(cfg.Loxone.CommandTimeoutSeconds)*time.Second,
+		func(slug string) (roborock.CommandContext, bool) { return commandContextForSlug(slug, restClient) },
+		func(context roborock.CommandContext, command roborock.LoxoneCommand) error {
+			dev := deviceManager.GetDevice(context.Slug)
+			if dev == nil {
+				return fmt.Errorf("unknown robot %q", context.Slug)
+			}
+			return executeCommand(dev, command.Action, command.Segments, command.Speed, command.Mode, command.Level, command.SceneID)
+		},
+		publishLoxoneActivities,
+	)
+	loxoneActivityTracker = commandCoordinator.Tracker()
+
+	deviceStateStore.Subscribe(func(update roborock.DeviceStateUpdate) {
+		state := update.State
+		switch update.Change {
+		case roborock.DeviceStateStatus:
+			publishDeviceStatus(state.Slug, state.Status)
+			publishLoxoneStatus(state.Slug, state.Status)
+			commandCoordinator.UpdateStatus(state.Slug, state.Status, state.UpdatedAt)
+			if webServer != nil {
+				webServer.BroadcastDeviceStatus(state.Slug, state.Status)
+			}
+			if state.Status != nil {
+				c := state.Status.Consumables
+				if c.MainBrushWorkTime > 0 || c.SideBrushWorkTime > 0 || c.FilterWorkTime > 0 || c.SensorDirtyTime > 0 || c.DustCollectionWorkTimes > 0 {
+					maintenanceChecker.Check(state.Name, &state.Status.ConsumablePercents, &state.Status.Consumables)
+				}
+			}
+		case roborock.DeviceStateAvailability:
+			publishDeviceAvailability(state.Slug, state.Online)
+			publishLoxoneAvailability(state.Slug, state.Online)
+			commandCoordinator.UpdateAvailability(state.Slug, state.Online, state.UpdatedAt)
+			if webServer != nil {
+				webServer.BroadcastDeviceAvailability(state.Slug, state.Online)
+			}
+		case roborock.DeviceStateRoom:
+			publishDeviceCurrentRoom(state.Slug, state.CurrentRoom)
+			publishLoxoneCurrentRoom(state.Slug, state.CurrentRoom)
+			commandCoordinator.UpdateRoom(state.Slug, state.CurrentRoom, state.UpdatedAt)
+		case roborock.DeviceStateInventory:
+			if len(state.Scenes) > 0 {
+				publishDeviceScenes(state.Slug, state.Scenes)
 			}
 		}
+	})
+	deviceManager.SetStatusCallback(func(slug string, status *roborock.PublishedStatus) {
+		capabilities := capabilityStore.ObserveStatus(slug, status, time.Now())
+		deviceStateStore.UpdateStatus(slug, status, capabilities, time.Now())
 	})
 	deviceManager.SetMapCallback(func(slug string, pngData []byte) {
 		publishDeviceMap(slug, pngData)
@@ -494,29 +552,23 @@ func startBridge(restClient *roborock.Client) {
 			logger.Warn("Failed to determine current room", "device", slug, "error", err)
 			return
 		}
-		publishDeviceCurrentRoom(slug, room)
-		publishLoxoneCurrentRoom(slug, room)
-		if cfg.Loxone.Enabled {
-			publishLoxoneActivities(slug, loxoneActivityTracker.UpdateRoom(slug, room, time.Now()))
-		}
+		deviceStateStore.UpdateCurrentRoom(slug, room, time.Now())
 	})
 	deviceManager.SetAvailabilityCallback(func(slug string, online bool) {
-		publishDeviceAvailability(slug, online)
-		publishLoxoneAvailability(slug, online)
-		if cfg.Loxone.Enabled {
-			publishLoxoneActivities(slug, loxoneActivityTracker.UpdateAvailability(slug, online, time.Now()))
-		}
-		if webServer != nil {
-			webServer.BroadcastDeviceAvailability(slug, online)
-		}
+		deviceStateStore.UpdateAvailability(slug, online, time.Now())
+	})
+	deviceManager.SetInventoryCallback(func(slug string, mappings []roborock.RoomMapping, roomsKnown bool, scenes []roborock.Scene, scenesKnown bool) {
+		capabilities := capabilityStore.UpdateInventory(slug, mappings, roomsKnown, scenes, scenesKnown, time.Now())
+		deviceStateStore.UpdateInventory(slug, mappings, scenes, capabilities, time.Now())
 	})
 
 	// Seed a retained `offline` for every device before connecting, so the
 	// availability topic is never absent and consumers start from a safe default.
 	for _, md := range deviceManager.GetDevices() {
-		publishDeviceAvailability(md.Slug, false)
-		publishLoxoneAvailability(md.Slug, false)
-		publishLoxoneCurrentRoom(md.Slug, nil)
+		capabilities := capabilityStore.Ensure(md.Slug, time.Now())
+		deviceStateStore.Seed(md, capabilities, time.Now())
+		deviceStateStore.UpdateAvailability(md.Slug, false, time.Now())
+		deviceStateStore.UpdateCurrentRoom(md.Slug, nil, time.Now())
 	}
 
 	// Load cached maps from disk (available before first poll)
@@ -530,20 +582,13 @@ func startBridge(restClient *roborock.Client) {
 	// Connect all devices to Roborock cloud MQTT
 	deviceManager.ConnectAll()
 
-	// Publish scenes per device
-	for _, md := range deviceManager.GetDevices() {
-		if len(md.Scenes) > 0 {
-			publishDeviceScenes(md.Slug, md.Scenes)
-		}
-	}
-
 	// Initial poll
 	deviceManager.PollAll()
 
 	// Subscribe to local MQTT commands per device
 	subscribeToCommands()
 	subscribeToLoxoneCommands(restClient)
-	if cfg.Loxone.Enabled {
+	if loxoneMQTTEnabled() {
 		for _, device := range deviceManager.GetDevices() {
 			dev := device
 			mqtt.Subscribe(loxoneTopic(dev.Slug, "last_command"), func(_ string, payload []byte) {
@@ -568,7 +613,9 @@ func startBridge(restClient *roborock.Client) {
 		cfg.Roborock.ScheduleSignals.PublicHoliday,
 		cfg.Roborock.ScheduleSignals.Vacation,
 	)
-	signals.Subscribe()
+	if localMQTTEnabled() {
+		signals.Subscribe()
+	}
 
 	scheduleEngine = roborock.NewScheduleEngine(cfg.Roborock.Schedules, scheduleStore, deviceManager, signals, notAtHomeStore)
 

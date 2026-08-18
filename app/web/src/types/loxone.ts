@@ -44,6 +44,28 @@ export interface LoxoneScene {
   command: string;
 }
 
+export interface RobotCapability {
+  supported: boolean | null;
+  source: string;
+  confidence: 'confirmed' | 'reported' | 'observed' | 'unknown';
+  values?: string[];
+  last_checked: string;
+  reason?: string;
+}
+
+export interface RobotCapabilities {
+  rooms: RobotCapability;
+  scenes: RobotCapability;
+  fan: RobotCapability;
+  mop: RobotCapability;
+  water: RobotCapability;
+  locate: RobotCapability;
+  dock: RobotCapability;
+  dock_empty: RobotCapability;
+  mop_wash: RobotCapability;
+  mop_dry: RobotCapability;
+}
+
 export interface LoxoneRobot {
   slug: string;
   name: string;
@@ -59,6 +81,7 @@ export interface LoxoneRobot {
   rooms: LoxoneRoom[];
   scenes: LoxoneScene[];
   diagnostics: LoxoneDiagnostics;
+  capabilities: RobotCapabilities;
 }
 
 export interface LoxoneMQTTTest {

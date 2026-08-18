@@ -26,6 +26,9 @@ func TestLoadConfigLoxoneDefaults(t *testing.T) {
 	if !loaded.Loxone.Enabled {
 		t.Fatal("expected Loxone mode to be enabled")
 	}
+	if !loaded.MQTT.IsEnabled() {
+		t.Fatal("legacy configuration must keep local MQTT enabled")
+	}
 	if loaded.Loxone.Topic != "loxone/roborock" {
 		t.Fatalf("got topic %q, want loxone/roborock", loaded.Loxone.Topic)
 	}
@@ -34,6 +37,28 @@ func TestLoadConfigLoxoneDefaults(t *testing.T) {
 	}
 	if loaded.Loxone.CommandTimeoutSeconds != 90 {
 		t.Fatalf("got timeout %d, want 90", loaded.Loxone.CommandTimeoutSeconds)
+	}
+}
+
+func TestLoadConfigCanDisableLocalMQTT(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "config.json")
+	data := []byte(`{
+		"mqtt":{"enabled":false,"url":"tcp://localhost:1883","topic":"home/roborock"},
+		"roborock":{"username":"user@example.com"},
+		"web":{"enabled":true}
+	}`)
+	if err := os.WriteFile(file, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadConfig(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.MQTT.IsEnabled() {
+		t.Fatal("expected local MQTT to be disabled")
+	}
+	if got := loaded.MQTT.GatewayConfig().URL; got != "tcp://localhost:1883" {
+		t.Fatalf("gateway URL = %q", got)
 	}
 }
 

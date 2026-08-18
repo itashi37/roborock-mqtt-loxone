@@ -16,6 +16,7 @@ type LoxoneCommand struct {
 	Segments []int
 	Speed    string
 	Mode     string
+	Level    string
 	SceneID  int
 }
 

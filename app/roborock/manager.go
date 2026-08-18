@@ -13,16 +13,18 @@ import (
 
 // ManagedDevice represents a single device with its cloud MQTT connection and status.
 type ManagedDevice struct {
-	Info      DeviceInfo
-	Slug      string
-	CloudMQTT    *CloudMQTT
-	Status       *PublishedStatus
-	MapPNG       []byte
-	VectorMapJSON []byte
-	RoomMappings  []RoomMapping
-	Scenes       []Scene
-	pollCount    int
-	mu           sync.RWMutex
+	Info              DeviceInfo
+	Slug              string
+	CloudMQTT         *CloudMQTT
+	Status            *PublishedStatus
+	MapPNG            []byte
+	VectorMapJSON     []byte
+	RoomMappings      []RoomMapping
+	RoomMappingsKnown bool
+	Scenes            []Scene
+	ScenesKnown       bool
+	pollCount         int
+	mu                sync.RWMutex
 }
 
 func (md *ManagedDevice) GetStatus() *PublishedStatus {
@@ -65,19 +67,40 @@ func (md *ManagedDevice) SetRoomMappings(mappings []RoomMapping) {
 	md.mu.Lock()
 	defer md.mu.Unlock()
 	md.RoomMappings = append([]RoomMapping(nil), mappings...)
+	md.RoomMappingsKnown = true
+}
+
+func (md *ManagedDevice) HasRoomMappingsResult() bool {
+	md.mu.RLock()
+	defer md.mu.RUnlock()
+	return md.RoomMappingsKnown
+}
+
+func (md *ManagedDevice) SetScenes(scenes []Scene) {
+	md.mu.Lock()
+	defer md.mu.Unlock()
+	md.Scenes = append([]Scene(nil), scenes...)
+	md.ScenesKnown = true
+}
+
+func (md *ManagedDevice) GetScenes() ([]Scene, bool) {
+	md.mu.RLock()
+	defer md.mu.RUnlock()
+	return append([]Scene(nil), md.Scenes...), md.ScenesKnown
 }
 
 // DeviceManager manages multiple Roborock devices.
 type DeviceManager struct {
-	devices    []*ManagedDevice
-	bySlug     map[string]*ManagedDevice
-	loginData  *LoginData
-	restClient *Client
-	runTracker *RunTracker
+	devices        []*ManagedDevice
+	bySlug         map[string]*ManagedDevice
+	loginData      *LoginData
+	restClient     *Client
+	runTracker     *RunTracker
 	mu             sync.RWMutex
 	onStatus       func(slug string, status *PublishedStatus)
 	onMap          func(slug string, pngData []byte)
 	onAvailability func(slug string, online bool)
+	onInventory    func(slug string, mappings []RoomMapping, roomsKnown bool, scenes []Scene, scenesKnown bool)
 }
 
 // NewDeviceManager creates a manager for the given devices.
@@ -89,13 +112,29 @@ func NewDeviceManager(loginData *LoginData, devices []DeviceInfo, restClient *Cl
 		bySlug:     make(map[string]*ManagedDevice),
 	}
 
-	usedSlugs := make(map[string]int)
-	for _, dev := range devices {
-		slug := Slugify(dev.Name)
-		usedSlugs[slug]++
-		if usedSlugs[slug] > 1 {
-			slug = fmt.Sprintf("%s-%d", slug, usedSlugs[slug])
+	slugStore, err := NewStableSlugStore(dataDir)
+	if err != nil {
+		logger.Warn("Failed to load persistent device slugs, using deterministic fallback", "error", err)
+	}
+	var slugs []string
+	if err == nil {
+		slugs, err = slugStore.Resolve(devices)
+	}
+	if err != nil {
+		logger.Warn("Failed to persist device slugs", "error", err)
+		slugs = make([]string, len(devices))
+		used := make(map[string]int)
+		for index, device := range devices {
+			base := Slugify(device.Name)
+			used[base]++
+			slugs[index] = base
+			if used[base] > 1 {
+				slugs[index] = fmt.Sprintf("%s-%d", base, used[base])
+			}
 		}
+	}
+	for index, dev := range devices {
+		slug := slugs[index]
 
 		md := &ManagedDevice{
 			Info: dev,
@@ -122,6 +161,18 @@ func (dm *DeviceManager) SetMapCallback(cb func(slug string, pngData []byte)) {
 // connection transitions online/offline.
 func (dm *DeviceManager) SetAvailabilityCallback(cb func(slug string, online bool)) {
 	dm.onAvailability = cb
+}
+
+func (dm *DeviceManager) SetInventoryCallback(cb func(slug string, mappings []RoomMapping, roomsKnown bool, scenes []Scene, scenesKnown bool)) {
+	dm.onInventory = cb
+}
+
+func (dm *DeviceManager) notifyInventory(device *ManagedDevice) {
+	if dm.onInventory == nil || device == nil {
+		return
+	}
+	scenes, scenesKnown := device.GetScenes()
+	dm.onInventory(device.Slug, device.GetRoomMappings(), device.HasRoomMappingsResult(), scenes, scenesKnown)
 }
 
 // ConnectedCount returns how many devices currently have a live cloud connection.
@@ -191,8 +242,9 @@ func (dm *DeviceManager) ConnectAll() {
 			if err != nil {
 				logger.Warn("Failed to fetch scenes", "device", dev.Slug, "error", err)
 			} else {
-				dev.Scenes = scenes
+				dev.SetScenes(scenes)
 				logger.Info("Fetched scenes", "device", dev.Slug, "count", len(scenes))
+				dm.notifyInventory(dev)
 			}
 		}
 	}
@@ -245,6 +297,8 @@ func (dm *DeviceManager) ExecuteScene(sceneID int) error {
 	}
 	return dm.restClient.ExecuteScene(sceneID)
 }
+
+func (dm *DeviceManager) RESTClient() *Client { return dm.restClient }
 
 // NoteSceneStarted associates an upcoming cleaning run on a device with a
 // triggered scene so its ETA is estimated from previous runs of the same scene.
@@ -327,10 +381,10 @@ func (dm *DeviceManager) PollAll() {
 		if shouldPollMap {
 			mappings, mappingErr := md.CloudMQTT.PollRoomMappings()
 			if mappingErr != nil {
-				md.SetRoomMappings(nil)
 				logger.Warn("Failed to refresh active room mapping", "device", md.Slug, "error", mappingErr)
 			} else {
 				md.SetRoomMappings(mappings)
+				dm.notifyInventory(md)
 			}
 			mapPNG, mapData, err := md.CloudMQTT.PollMap()
 			if err != nil {
