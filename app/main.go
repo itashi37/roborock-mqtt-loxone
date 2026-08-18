@@ -710,6 +710,30 @@ func executeCommand(dev *roborock.ManagedDevice, action string, segments []int, 
 	case "dock":
 		logger.Info("Sending vacuum to dock", "device", dev.Slug)
 		err = dev.CloudMQTT.Dock()
+	case "stop":
+		logger.Info("Stopping vacuum", "device", dev.Slug)
+		err = dev.CloudMQTT.Stop()
+	case "locate":
+		logger.Info("Locating vacuum", "device", dev.Slug)
+		err = dev.CloudMQTT.Locate()
+	case "empty_dustbin":
+		logger.Info("Starting dock dust collection", "device", dev.Slug)
+		err = dev.CloudMQTT.StartDustCollection()
+	case "stop_emptying":
+		logger.Info("Stopping dock dust collection", "device", dev.Slug)
+		err = dev.CloudMQTT.StopDustCollection()
+	case "wash_mop":
+		logger.Info("Starting dock mop wash", "device", dev.Slug)
+		err = dev.CloudMQTT.StartWash()
+	case "stop_washing":
+		logger.Info("Stopping dock mop wash", "device", dev.Slug)
+		err = dev.CloudMQTT.StopWash()
+	case "dry_mop":
+		logger.Info("Starting dock mop drying", "device", dev.Slug)
+		err = dev.CloudMQTT.SetDryerEnabled(true)
+	case "stop_drying":
+		logger.Info("Stopping dock mop drying", "device", dev.Slug)
+		err = dev.CloudMQTT.SetDryerEnabled(false)
 	case "segment_clean":
 		logger.Info("Starting segment clean", "device", dev.Slug, "segments", segments)
 		deviceManager.NoteSegmentClean(dev.Slug, segments)

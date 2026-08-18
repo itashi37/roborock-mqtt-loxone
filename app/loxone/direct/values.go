@@ -79,6 +79,24 @@ func ValuesForState(state roborock.InternalDeviceState, mapping InputMapping) []
 		{"filter", Analog, strconv.Itoa(filter)},
 		{"sensor", Analog, strconv.Itoa(sensor)},
 	}
+	if status != nil {
+		for _, optional := range []struct {
+			field string
+			value *int
+		}{
+			{"dock_type", status.DockType}, {"charge_status", status.ChargeStatus},
+			{"dock_error_status", status.DockErrorStatus}, {"dust_collection_status", status.DustCollectionStatus},
+			{"wash_status", status.WashStatus}, {"dry_status", status.DryStatus},
+		} {
+			if optional.value != nil {
+				values = append(values, struct {
+					field string
+					kind  ValueKind
+					value string
+				}{optional.field, Analog, strconv.Itoa(*optional.value)})
+			}
+		}
+	}
 	result := make([]StateValue, 0, len(values))
 	for _, value := range values {
 		result = append(result, StateValue{Robot: state.Slug, Field: value.field, Input: inputName(state.Slug, value.field, mapping), Kind: value.kind, Value: value.value})

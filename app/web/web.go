@@ -148,6 +148,7 @@ func (ws *WebServer) setupRoutes() {
 			r.Get("/map", ws.deviceMap)
 			r.Get("/map.json", ws.deviceMapJSON)
 			r.Get("/scenes", ws.deviceScenes)
+			r.Get("/advanced-diagnostics", ws.deviceAdvancedDiagnostics)
 			r.Post("/scenes/{id}/execute", ws.executeScene)
 			r.Get("/schedule", ws.deviceSchedule)
 			r.Post("/schedule", ws.deviceScheduleSave)

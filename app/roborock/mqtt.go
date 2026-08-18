@@ -24,7 +24,7 @@ type CloudMQTT struct {
 	client              pahomqtt.Client
 	loginData           *LoginData
 	device              *DeviceInfo
-	mqttUsername         string
+	mqttUsername        string
 	tracker             *RequestTracker
 	mapSecurity         *MapSecurityData
 	mapChan             chan []byte
@@ -391,6 +391,65 @@ func (cm *CloudMQTT) Dock() error {
 	return cm.SendCommandNoWait(payload)
 }
 
+func (cm *CloudMQTT) Stop() error {
+	payload, _, err := BuildStopPayload()
+	if err != nil {
+		return err
+	}
+	return cm.SendCommandNoWait(payload)
+}
+
+// Locate waits for the robot RPC acknowledgement because the audible response
+// has no reliable state transition that the bridge can observe.
+func (cm *CloudMQTT) Locate() error {
+	payload, requestID, err := BuildLocatePayload()
+	if err != nil {
+		return err
+	}
+	_, err = cm.SendCommand(payload, requestID)
+	return err
+}
+
+func (cm *CloudMQTT) StartDustCollection() error {
+	payload, _, err := BuildStartDustCollectionPayload()
+	if err != nil {
+		return err
+	}
+	return cm.SendCommandNoWait(payload)
+}
+
+func (cm *CloudMQTT) StopDustCollection() error {
+	payload, _, err := BuildStopDustCollectionPayload()
+	if err != nil {
+		return err
+	}
+	return cm.SendCommandNoWait(payload)
+}
+
+func (cm *CloudMQTT) StartWash() error {
+	payload, _, err := BuildStartWashPayload()
+	if err != nil {
+		return err
+	}
+	return cm.SendCommandNoWait(payload)
+}
+
+func (cm *CloudMQTT) StopWash() error {
+	payload, _, err := BuildStopWashPayload()
+	if err != nil {
+		return err
+	}
+	return cm.SendCommandNoWait(payload)
+}
+
+func (cm *CloudMQTT) SetDryerEnabled(enabled bool) error {
+	payload, _, err := BuildSetDryerStatusPayload(enabled)
+	if err != nil {
+		return err
+	}
+	return cm.SendCommandNoWait(payload)
+}
+
 // SegmentClean cleans specific room segments.
 func (cm *CloudMQTT) SegmentClean(segments []int) error {
 	payload, _, err := BuildSegmentCleanPayload(segments)
@@ -488,6 +547,18 @@ func (cm *CloudMQTT) PollRoomMappings() ([]RoomMapping, error) {
 		return nil, fmt.Errorf("poll room mapping: %w", err)
 	}
 	return ParseRoomMappings(response)
+}
+
+func (cm *CloudMQTT) PollAdvancedDiagnostics() (AdvancedDiagnostics, error) {
+	payload, requestID, err := BuildAppGetInitStatusPayload()
+	if err != nil {
+		return AdvancedDiagnostics{}, err
+	}
+	response, err := cm.SendCommand(payload, requestID)
+	if err != nil {
+		return AdvancedDiagnostics{}, fmt.Errorf("app_get_init_status: %w", err)
+	}
+	return ParseAdvancedDiagnostics(response, time.Now())
 }
 
 // handleMapResponse processes a Protocol 301 map data message.

@@ -27,3 +27,37 @@ func TestCapabilitiesUseAuthoritativeInventoryAndObservedStatus(t *testing.T) {
 		t.Fatal("charging does not prove dock empty support")
 	}
 }
+
+func TestCapabilitiesUseDockStatusAndExplicitFeatureEvidence(t *testing.T) {
+	store := NewCapabilityStore()
+	now := time.Unix(20, 0)
+	dockType, dust, wash, dry := 3, 0, 0, 1
+	capabilities := store.ObserveStatus("robot", &PublishedStatus{
+		DockType: &dockType, DustCollectionStatus: &dust, WashStatus: &wash, DryStatus: &dry,
+	}, now)
+	for name, capability := range map[string]Capability{
+		"dock": capabilities.Dock, "dock_empty": capabilities.DockEmpty,
+		"mop_wash": capabilities.MopWash, "mop_dry": capabilities.MopDry,
+	} {
+		if capability.Supported == nil || !*capability.Supported {
+			t.Fatalf("%s was not detected: %+v", name, capability)
+		}
+	}
+	capabilities = store.ObserveAdvancedDiagnostics("robot", AdvancedDiagnostics{Fields: map[string]any{
+		"support_find_me": float64(1), "support_app_stop": true,
+	}}, now.Add(time.Second))
+	if capabilities.Locate.Supported == nil || !*capabilities.Locate.Supported || capabilities.Stop.Supported == nil || !*capabilities.Stop.Supported {
+		t.Fatalf("explicit features not recorded: %+v", capabilities)
+	}
+	if capabilities.Locate.Confidence != CapabilityReported {
+		t.Fatalf("confidence = %s", capabilities.Locate.Confidence)
+	}
+}
+
+func TestNumericFeatureBitmaskDoesNotGuessCapabilities(t *testing.T) {
+	store := NewCapabilityStore()
+	capabilities := store.ObserveAdvancedDiagnostics("robot", AdvancedDiagnostics{Fields: map[string]any{"feature_flags": float64(918273)}}, time.Now())
+	if capabilities.Locate.Supported != nil || capabilities.Stop.Supported != nil {
+		t.Fatalf("bitmask must remain uninterpreted: %+v", capabilities)
+	}
+}

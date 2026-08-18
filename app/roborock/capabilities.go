@@ -1,6 +1,7 @@
 package roborock
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -38,6 +39,7 @@ type DeviceCapabilities struct {
 	DockEmpty Capability `json:"dock_empty"`
 	MopWash   Capability `json:"mop_wash"`
 	MopDry    Capability `json:"mop_dry"`
+	Stop      Capability `json:"stop"`
 }
 
 func unknownCapability(now time.Time, reason string) Capability {
@@ -56,6 +58,7 @@ func InitialDeviceCapabilities(now time.Time) DeviceCapabilities {
 		Fan: unknownCapability(now, reason), Mop: unknownCapability(now, reason), Water: unknownCapability(now, reason),
 		Locate: unknownCapability(now, reason), Dock: unknownCapability(now, reason),
 		DockEmpty: unknownCapability(now, reason), MopWash: unknownCapability(now, reason), MopDry: unknownCapability(now, reason),
+		Stop: unknownCapability(now, reason),
 	}
 }
 
@@ -130,9 +133,74 @@ func (s *CapabilityStore) ObserveStatus(slug string, status *PublishedStatus, no
 		if state == "charging" || state == "returning" || state == "docked" {
 			capabilities.Dock = observedCapability(now, "get_status.state", state)
 		}
+		if status.DockType != nil && *status.DockType > 0 {
+			capabilities.Dock = observedCapability(now, "get_status.dock_type", fmt.Sprintf("%d", *status.DockType))
+		}
+		if status.DustCollectionStatus != nil {
+			capabilities.DockEmpty = observedCapability(now, "get_status.dust_collection_status", fmt.Sprintf("%d", *status.DustCollectionStatus))
+		}
+		if status.WashStatus != nil {
+			capabilities.MopWash = observedCapability(now, "get_status.wash_status", fmt.Sprintf("%d", *status.WashStatus))
+		}
+		if status.DryStatus != nil {
+			capabilities.MopDry = observedCapability(now, "get_status.dry_status", fmt.Sprintf("%d", *status.DryStatus))
+		}
 	}
 	s.devices[slug] = capabilities
 	return capabilities
+}
+
+// ObserveAdvancedDiagnostics records only explicit boolean feature reports.
+// Numeric feature bitmasks are exposed to diagnostics but deliberately not
+// interpreted until their schema is verified on real hardware.
+func (s *CapabilityStore) ObserveAdvancedDiagnostics(slug string, diagnostics AdvancedDiagnostics, now time.Time) DeviceCapabilities {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	capabilities, ok := s.devices[slug]
+	if !ok {
+		capabilities = InitialDeviceCapabilities(now)
+	}
+	for name, value := range diagnostics.Fields {
+		supported, explicit := explicitFeatureBoolean(value)
+		if !explicit {
+			continue
+		}
+		capability := reportedCapability(now, "app_get_init_status."+name, supported)
+		switch strings.ToLower(name) {
+		case "locate", "find_me", "support_locate", "support_find_me":
+			capabilities.Locate = capability
+		case "stop", "app_stop", "support_app_stop":
+			capabilities.Stop = capability
+		case "dock_empty", "dust_collection", "support_dust_collection":
+			capabilities.DockEmpty = capability
+		case "mop_wash", "wash_mop", "support_wash_mop":
+			capabilities.MopWash = capability
+		case "mop_dry", "dry_mop", "support_dryer":
+			capabilities.MopDry = capability
+		}
+	}
+	s.devices[slug] = capabilities
+	return capabilities
+}
+
+func reportedCapability(now time.Time, source string, supported bool) Capability {
+	return Capability{Supported: &supported, Source: source, Confidence: CapabilityReported, LastChecked: now}
+}
+
+func explicitFeatureBoolean(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case float64:
+		if typed == 0 || typed == 1 {
+			return typed == 1, true
+		}
+	case int:
+		if typed == 0 || typed == 1 {
+			return typed == 1, true
+		}
+	}
+	return false, false
 }
 
 func mergeObservedValue(current Capability, now time.Time, source, value string) Capability {

@@ -109,10 +109,10 @@ type ProductInfo struct {
 
 // Scene represents a cleaning program/routine configured in the Roborock app.
 type Scene struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	Type   string `json:"type,omitempty"`
-	Param  any    `json:"param,omitempty"`
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Type  string `json:"type,omitempty"`
+	Param any    `json:"param,omitempty"`
 }
 
 // ScenesResponse represents the response from the scenes API.
@@ -123,28 +123,34 @@ type ScenesResponse struct {
 
 // DeviceStatus represents the current state of the vacuum.
 type DeviceStatus struct {
-	State          int    `json:"state"`
-	Battery        int    `json:"battery"`
-	CleanTime      int    `json:"clean_time"`
-	CleanArea      int    `json:"clean_area"`
+	State     int `json:"state"`
+	Battery   int `json:"battery"`
+	CleanTime int `json:"clean_time"`
+	CleanArea int `json:"clean_area"`
 	// CleanPercent is the run completion percentage the robot reports directly.
 	// Only newer models send it, so it is a pointer: nil means "not reported".
-	CleanPercent   *int   `json:"clean_percent"`
-	ErrorCode      int    `json:"error_code"`
-	MapPresent     int    `json:"map_present"`
-	InCleaning     int    `json:"in_cleaning"`
-	InReturning    int    `json:"in_returning"`
-	InFreshState   int    `json:"in_fresh_state"`
-	FanPower       int    `json:"fan_power"`
-	DNDEnabled     int    `json:"dnd_enabled"`
-	WaterBoxStatus int    `json:"water_box_status"`
-	WaterBoxMode   int    `json:"water_box_custom_mode"`
-	MopMode        int    `json:"mop_mode"`
-	StateName      string `json:"state_name"`
-	FanSpeedName   string `json:"fan_speed_name"`
-	MopModeName    string `json:"mop_mode_name"`
-	WaterBoxName   string `json:"water_box_name"`
-	ErrorName      string `json:"error_name"`
+	CleanPercent         *int   `json:"clean_percent"`
+	ErrorCode            int    `json:"error_code"`
+	MapPresent           int    `json:"map_present"`
+	InCleaning           int    `json:"in_cleaning"`
+	InReturning          int    `json:"in_returning"`
+	InFreshState         int    `json:"in_fresh_state"`
+	FanPower             int    `json:"fan_power"`
+	DNDEnabled           int    `json:"dnd_enabled"`
+	WaterBoxStatus       int    `json:"water_box_status"`
+	WaterBoxMode         int    `json:"water_box_custom_mode"`
+	MopMode              int    `json:"mop_mode"`
+	StateName            string `json:"state_name"`
+	FanSpeedName         string `json:"fan_speed_name"`
+	MopModeName          string `json:"mop_mode_name"`
+	WaterBoxName         string `json:"water_box_name"`
+	ErrorName            string `json:"error_name"`
+	DockType             *int   `json:"dock_type,omitempty"`
+	ChargeStatus         *int   `json:"charge_status,omitempty"`
+	DockErrorStatus      *int   `json:"dock_error_status,omitempty"`
+	DustCollectionStatus *int   `json:"dust_collection_status,omitempty"`
+	WashStatus           *int   `json:"wash_status,omitempty"`
+	DryStatus            *int   `json:"dry_status,omitempty"`
 }
 
 // ConsumableStatus represents consumable wear levels.
@@ -187,16 +193,22 @@ type ConsumablePercents struct {
 
 // PublishedStatus is the status published to the local MQTT broker.
 type PublishedStatus struct {
-	State              string             `json:"state"`
-	Battery            int                `json:"battery"`
-	FanSpeed           string             `json:"fan_speed"`
-	MopMode            string             `json:"mop_mode"`
-	WaterBox           string             `json:"water_box"`
-	CleanTime          int                `json:"clean_time"`
-	CleanArea          int                `json:"clean_area"`
-	ErrorCode          int                `json:"error_code"`
-	Error              string             `json:"error"`
-	InCleaning         bool               `json:"in_cleaning"`
+	State                string `json:"state"`
+	Battery              int    `json:"battery"`
+	FanSpeed             string `json:"fan_speed"`
+	MopMode              string `json:"mop_mode"`
+	WaterBox             string `json:"water_box"`
+	CleanTime            int    `json:"clean_time"`
+	CleanArea            int    `json:"clean_area"`
+	ErrorCode            int    `json:"error_code"`
+	Error                string `json:"error"`
+	InCleaning           bool   `json:"in_cleaning"`
+	DockType             *int   `json:"dock_type,omitempty"`
+	ChargeStatus         *int   `json:"charge_status,omitempty"`
+	DockErrorStatus      *int   `json:"dock_error_status,omitempty"`
+	DustCollectionStatus *int   `json:"dust_collection_status,omitempty"`
+	WashStatus           *int   `json:"wash_status,omitempty"`
+	DryStatus            *int   `json:"dry_status,omitempty"`
 	// CleanPercent is the run completion percentage reported directly by the
 	// robot (newer models only). Unlike RemainingMinutes below it is not an
 	// estimate; set only while cleaning, omitted when the robot does not report it.

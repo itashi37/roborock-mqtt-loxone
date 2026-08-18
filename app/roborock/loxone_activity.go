@@ -158,6 +158,19 @@ func (t *LoxoneActivityTracker) MarkFailed(slug, id, reason string, now time.Tim
 	return &activity
 }
 
+func (t *LoxoneActivityTracker) MarkCompleted(slug, id string, now time.Time) *LoxoneActivity {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	device := t.device(slug)
+	pending := device.pending[id]
+	if pending == nil {
+		return nil
+	}
+	delete(device.pending, id)
+	activity := commandActivity(now, pending, "completed", "")
+	return &activity
+}
+
 func (t *LoxoneActivityTracker) ExpireCommand(slug, id string, now time.Time) *LoxoneActivity {
 	return t.MarkFailed(slug, id, "confirmation timeout", now)
 }
@@ -267,6 +280,22 @@ func (t *LoxoneActivityTracker) confirmPending(device *loxoneActivityDevice, sta
 			confirmed = strings.EqualFold(status.FanSpeed, pending.parsed.Speed)
 		case "set_mop_mode":
 			confirmed = strings.EqualFold(status.MopMode, pending.parsed.Mode)
+		case "set_water_box":
+			confirmed = strings.EqualFold(status.WaterBox, pending.parsed.Level)
+		case "stop":
+			confirmed = state == "idle"
+		case "empty_dustbin":
+			confirmed = status.DustCollectionStatus != nil && *status.DustCollectionStatus > 0
+		case "stop_emptying":
+			confirmed = status.DustCollectionStatus != nil && *status.DustCollectionStatus == 0
+		case "wash_mop":
+			confirmed = state == "washing_mop" || status.WashStatus != nil && *status.WashStatus > 0
+		case "stop_washing":
+			confirmed = status.WashStatus != nil && *status.WashStatus == 0 && state != "washing_mop"
+		case "dry_mop":
+			confirmed = status.DryStatus != nil && *status.DryStatus > 0
+		case "stop_drying":
+			confirmed = status.DryStatus != nil && *status.DryStatus == 0
 		}
 		if confirmed {
 			activities = append(activities, commandActivity(now, pending, "completed", ""))
@@ -330,6 +359,10 @@ func incompatibleLoxoneCommand(command LoxoneCommand, device *loxoneActivityDevi
 		if state == "updating" || state == "mapping" || state == "error" || state == "shutting_down" {
 			return "dock incompatible with current state"
 		}
+	case "empty_dustbin", "wash_mop", "dry_mop":
+		if state != "charging" && state != "docked" && state != "servicing_dock" && state != "washing_mop" && state != "emptying_dustbin" {
+			return "dock service command incompatible with current state"
+		}
 	}
 	return ""
 }
@@ -350,6 +383,22 @@ func loxoneCommandAlreadySatisfied(command LoxoneCommand, device *loxoneActivity
 		return strings.EqualFold(device.status.FanSpeed, command.Speed)
 	case "set_mop_mode":
 		return strings.EqualFold(device.status.MopMode, command.Mode)
+	case "set_water_box":
+		return strings.EqualFold(device.status.WaterBox, command.Level)
+	case "stop":
+		return state == "idle"
+	case "empty_dustbin":
+		return device.status.DustCollectionStatus != nil && *device.status.DustCollectionStatus > 0
+	case "stop_emptying":
+		return device.status.DustCollectionStatus != nil && *device.status.DustCollectionStatus == 0
+	case "wash_mop":
+		return state == "washing_mop" || device.status.WashStatus != nil && *device.status.WashStatus > 0
+	case "stop_washing":
+		return device.status.WashStatus != nil && *device.status.WashStatus == 0 && state != "washing_mop"
+	case "dry_mop":
+		return device.status.DryStatus != nil && *device.status.DryStatus > 0
+	case "stop_drying":
+		return device.status.DryStatus != nil && *device.status.DryStatus == 0
 	default:
 		return false
 	}

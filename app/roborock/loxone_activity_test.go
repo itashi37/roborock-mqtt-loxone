@@ -56,6 +56,27 @@ func TestLoxoneCommandLifecycleAndTimeout(t *testing.T) {
 	}
 }
 
+func TestAdvancedDockCommandsRequireObservedTransitions(t *testing.T) {
+	tracker := NewLoxoneActivityTracker(time.Second)
+	now := time.Unix(1700001000, 0)
+	zero, active := 0, 1
+	tracker.UpdateStatus("vac", &PublishedStatus{State: "charging", DustCollectionStatus: &zero, WashStatus: &zero}, now)
+	empty := tracker.BeginCommand("vac", "empty_dustbin", LoxoneCommand{Action: "empty_dustbin"}, nil, true, now)
+	if !empty.Dispatch {
+		t.Fatalf("empty was rejected: %+v", empty)
+	}
+	activities := tracker.UpdateStatus("vac", &PublishedStatus{State: "emptying_dustbin", DustCollectionStatus: &active, WashStatus: &zero}, now.Add(time.Second))
+	assertActivity(t, activities, "command", "", "completed")
+
+	tracker.UpdateStatus("vac", &PublishedStatus{State: "charging", DustCollectionStatus: &zero, WashStatus: &zero}, now.Add(2*time.Second))
+	wash := tracker.BeginCommand("vac", "wash_mop", LoxoneCommand{Action: "wash_mop"}, nil, true, now.Add(2*time.Second))
+	if !wash.Dispatch {
+		t.Fatalf("wash was rejected: %+v", wash)
+	}
+	activities = tracker.UpdateStatus("vac", &PublishedStatus{State: "washing_mop", DustCollectionStatus: &zero, WashStatus: &active}, now.Add(3*time.Second))
+	assertActivity(t, activities, "command", "", "completed")
+}
+
 func TestLoxoneCommandRejectsOfflineDuplicateAndIncompatible(t *testing.T) {
 	tracker := NewLoxoneActivityTracker(2 * time.Second)
 	now := time.Unix(1700000000, 0)

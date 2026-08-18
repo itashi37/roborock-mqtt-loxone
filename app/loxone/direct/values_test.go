@@ -51,3 +51,18 @@ func TestInputMappingOverride(t *testing.T) {
 		}
 	}
 }
+
+func TestValuesForStateAddsOnlyReportedDockFields(t *testing.T) {
+	dockType, wash := 3, 1
+	values := ValuesForState(roborock.InternalDeviceState{Slug: "robot", UpdatedAt: time.Unix(1, 0), Status: &roborock.PublishedStatus{DockType: &dockType, WashStatus: &wash}}, InputMapping{})
+	byField := make(map[string]StateValue)
+	for _, value := range values {
+		byField[value.Field] = value
+	}
+	if byField["dock_type"].Value != "3" || byField["wash_status"].Value != "1" {
+		t.Fatalf("reported dock fields missing: %+v", byField)
+	}
+	if _, ok := byField["dry_status"]; ok {
+		t.Fatal("unreported dry_status must not be pushed")
+	}
+}

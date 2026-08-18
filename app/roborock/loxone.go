@@ -220,7 +220,7 @@ func ParseLoxoneCommand(payload string, roomNames map[string]string, scenes []Sc
 	argument = strings.TrimSpace(argument)
 
 	switch verb {
-	case "start", "pause", "dock", "locate":
+	case "start", "pause", "dock", "locate", "stop", "empty_dustbin", "stop_emptying", "wash_mop", "stop_washing", "dry_mop", "stop_drying":
 		if hasArgument {
 			return LoxoneCommand{}, fmt.Errorf("%s does not accept an argument", verb)
 		}

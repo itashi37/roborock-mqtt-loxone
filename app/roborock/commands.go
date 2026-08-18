@@ -74,29 +74,29 @@ var waterBoxNames = map[int]string{
 }
 
 var stateNames = map[int]string{
-	1:  "starting",
-	2:  "charger_disconnected",
-	3:  "idle",
-	4:  "remote_control_active",
-	5:  "cleaning",
-	6:  "returning_home",
-	7:  "manual_mode",
-	8:  "charging",
-	9:  "charging_problem",
-	10: "paused",
-	11: "spot_cleaning",
-	12: "error",
-	13: "shutting_down",
-	14: "updating",
-	15: "docking",
-	16: "going_to_target",
-	17: "zoned_cleaning",
-	18: "segment_cleaning",
-	22: "emptying_dustbin",
-	23: "washing_mop",
-	26: "going_to_wash_mop",
-	28: "in_call",
-	29: "mapping",
+	1:   "starting",
+	2:   "charger_disconnected",
+	3:   "idle",
+	4:   "remote_control_active",
+	5:   "cleaning",
+	6:   "returning_home",
+	7:   "manual_mode",
+	8:   "charging",
+	9:   "charging_problem",
+	10:  "paused",
+	11:  "spot_cleaning",
+	12:  "error",
+	13:  "shutting_down",
+	14:  "updating",
+	15:  "docking",
+	16:  "going_to_target",
+	17:  "zoned_cleaning",
+	18:  "segment_cleaning",
+	22:  "emptying_dustbin",
+	23:  "washing_mop",
+	26:  "going_to_wash_mop",
+	28:  "in_call",
+	29:  "mapping",
 	100: "fully_charged",
 }
 
@@ -194,6 +194,30 @@ func BuildDockPayload() ([]byte, int, error) {
 	return buildIPCPayload("app_charge", []any{})
 }
 
+func BuildStopPayload() ([]byte, int, error) { return buildIPCPayload("app_stop", []any{}) }
+
+func BuildLocatePayload() ([]byte, int, error) { return buildIPCPayload("find_me", []any{}) }
+
+func BuildStartDustCollectionPayload() ([]byte, int, error) {
+	return buildIPCPayload("app_start_collect_dust", []any{})
+}
+
+func BuildStopDustCollectionPayload() ([]byte, int, error) {
+	return buildIPCPayload("app_stop_collect_dust", []any{})
+}
+
+func BuildStartWashPayload() ([]byte, int, error) { return buildIPCPayload("app_start_wash", []any{}) }
+
+func BuildStopWashPayload() ([]byte, int, error) { return buildIPCPayload("app_stop_wash", []any{}) }
+
+func BuildSetDryerStatusPayload(enabled bool) ([]byte, int, error) {
+	status := 0
+	if enabled {
+		status = 1
+	}
+	return buildIPCPayload("app_set_dryer_status", []any{map[string]int{"status": status}})
+}
+
 // BuildSegmentCleanPayload creates the payload for APP_SEGMENT_CLEAN.
 func BuildSegmentCleanPayload(segments []int) ([]byte, int, error) {
 	return buildIPCPayload("app_segment_clean", []any{map[string]any{"segments": segments}})
@@ -258,6 +282,10 @@ func BuildGetConsumablePayload() ([]byte, int, error) {
 // commandable segment-to-home-room mapping.
 func BuildGetRoomMappingPayload() ([]byte, int, error) {
 	return buildIPCPayload("get_room_mapping", []any{})
+}
+
+func BuildAppGetInitStatusPayload() ([]byte, int, error) {
+	return buildIPCPayload("app_get_init_status", []any{})
 }
 
 // BuildGetMapPayload creates the payload for GET_MAP_V1 with security nonce.

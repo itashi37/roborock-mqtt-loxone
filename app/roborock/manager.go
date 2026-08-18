@@ -212,6 +212,8 @@ func (dm *DeviceManager) ConnectAll() {
 				ErrorCode:  status.ErrorCode,
 				Error:      status.ErrorName,
 				InCleaning: status.InCleaning > 0,
+				DockType:   status.DockType, ChargeStatus: status.ChargeStatus, DockErrorStatus: status.DockErrorStatus,
+				DustCollectionStatus: status.DustCollectionStatus, WashStatus: status.WashStatus, DryStatus: status.DryStatus,
 			}
 			if status.InCleaning > 0 {
 				published.CleanPercent = status.CleanPercent
@@ -351,6 +353,8 @@ func (dm *DeviceManager) PollAll() {
 			ErrorCode:  status.ErrorCode,
 			Error:      status.ErrorName,
 			InCleaning: status.InCleaning > 0,
+			DockType:   status.DockType, ChargeStatus: status.ChargeStatus, DockErrorStatus: status.DockErrorStatus,
+			DustCollectionStatus: status.DustCollectionStatus, WashStatus: status.WashStatus, DryStatus: status.DryStatus,
 		}
 		if status.InCleaning > 0 {
 			published.CleanPercent = status.CleanPercent

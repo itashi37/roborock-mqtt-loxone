@@ -6,6 +6,7 @@ import { RoomMappingTable } from './RoomMappingTable';
 import { ScenesPanel } from './ScenesPanel';
 import { MqttTopicsPanel } from './MqttTopicsPanel';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
+import { AdvancedDiagnosticsPanel } from './AdvancedDiagnosticsPanel';
 
 interface Props {
   robot: LoxoneRobot;
@@ -62,6 +63,7 @@ export function LoxoneRobotCard(props: Props) {
       </Section>
       <Section title="MQTT topics" description="The standard integration consumes two subscriptions per selected robot."><MqttTopicsPanel topics={robot.topics} /></Section>
       <Section title="Diagnostics"><DiagnosticsPanel core={core} activity={lastActivity} lastCommand={lastCommand} activities={activities} mqttTest={mqttTest} testing={busy.has('mqtt-test')} onTestMQTT={props.onTestMQTT} /></Section>
+      <Section title="Capabilities & advanced controls" description="Advanced/Admin controls appear only after evidence from this robot confirms support."><AdvancedDiagnosticsPanel slug={robot.slug} initialCapabilities={robot.capabilities} busy={busy} onCommand={props.onCommand} /></Section>
     </div>
   </article>;
 }

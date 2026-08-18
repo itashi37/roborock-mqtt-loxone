@@ -64,6 +64,12 @@ export interface RobotCapabilities {
   dock_empty: RobotCapability;
   mop_wash: RobotCapability;
   mop_dry: RobotCapability;
+  stop: RobotCapability;
+}
+
+export interface AdvancedDiagnosticsResponse {
+  diagnostics: { method: string; collected_at: string; fields: Record<string, unknown> };
+  capabilities: RobotCapabilities;
 }
 
 export interface LoxoneRobot {

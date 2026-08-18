@@ -1,5 +1,5 @@
 import type { DeviceSummary } from '@/types/status';
-import type { LoxoneExportSelection, LoxoneIntegration, LoxoneMQTTTest, LoxoneRoom } from '@/types/loxone';
+import type { AdvancedDiagnosticsResponse, LoxoneExportSelection, LoxoneIntegration, LoxoneMQTTTest, LoxoneRoom } from '@/types/loxone';
 
 export const API_BASE = import.meta.env.DEV ? 'http://localhost:8080/api' : '/api';
 
@@ -217,6 +217,13 @@ export async function fetchLoxoneIntegration(): Promise<LoxoneIntegration> {
   const response = await fetch(`${API_BASE}/loxone/integration`);
   if (!response.ok) throw new Error('Failed to load Loxone integration');
   return response.json();
+}
+
+export async function fetchAdvancedDiagnostics(slug: string): Promise<AdvancedDiagnosticsResponse> {
+  const response = await fetch(`${API_BASE}/devices/${slug}/advanced-diagnostics`, { cache: 'no-store' });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Failed to query app_get_init_status');
+  return data;
 }
 
 export async function saveLoxoneRoomOverride(slug: string, roomId: number, name: string): Promise<LoxoneRoom[]> {

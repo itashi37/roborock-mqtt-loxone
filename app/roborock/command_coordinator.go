@@ -83,6 +83,11 @@ func (c *CommandCoordinator) SubmitParsed(context CommandContext, raw string, co
 		if activity := c.tracker.MarkRunning(context.Slug, decision.ID, time.Now()); activity != nil {
 			c.emit(context.Slug, []LoxoneActivity{*activity})
 		}
+		if command.Action == "locate" {
+			if activity := c.tracker.MarkCompleted(context.Slug, decision.ID, time.Now()); activity != nil {
+				c.emit(context.Slug, []LoxoneActivity{*activity})
+			}
+		}
 	}()
 	return result
 }
@@ -181,6 +186,22 @@ func validateCommandInventory(command LoxoneCommand, context CommandContext) err
 	case "locate":
 		if context.Capabilities.Locate.Supported == nil || !*context.Capabilities.Locate.Supported {
 			return fmt.Errorf("capability locate is not confirmed")
+		}
+	case "stop":
+		if context.Capabilities.Stop.Supported == nil || !*context.Capabilities.Stop.Supported {
+			return fmt.Errorf("capability stop is not confirmed")
+		}
+	case "empty_dustbin", "stop_emptying":
+		if context.Capabilities.DockEmpty.Supported == nil || !*context.Capabilities.DockEmpty.Supported {
+			return fmt.Errorf("capability dock_empty is not confirmed")
+		}
+	case "wash_mop", "stop_washing":
+		if context.Capabilities.MopWash.Supported == nil || !*context.Capabilities.MopWash.Supported {
+			return fmt.Errorf("capability mop_wash is not confirmed")
+		}
+	case "dry_mop", "stop_drying":
+		if context.Capabilities.MopDry.Supported == nil || !*context.Capabilities.MopDry.Supported {
+			return fmt.Errorf("capability mop_dry is not confirmed")
 		}
 	case "set_fan_speed":
 		if context.Capabilities.Fan.Supported != nil && !*context.Capabilities.Fan.Supported {
