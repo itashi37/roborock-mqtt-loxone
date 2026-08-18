@@ -90,6 +90,24 @@ export interface LoxoneMQTTTest {
   tested_at: number;
 }
 
+export interface DirectInputDiagnostic {
+  robot: string;
+  field: string;
+  input: string;
+  kind: 'digital' | 'analog' | 'text';
+  last_value?: string;
+  last_attempt?: string;
+  last_success?: string;
+  last_error?: string;
+  consecutive_retries: number;
+}
+
+export interface DirectDiagnostics {
+  last_transmission?: string;
+  last_error?: string;
+  inputs: DirectInputDiagnostic[];
+}
+
 export interface LoxoneIntegration {
   project: string;
   upstream: string;
@@ -102,6 +120,8 @@ export interface LoxoneIntegration {
   exceeds_limit: boolean;
   warning?: string;
   mqtt_test?: LoxoneMQTTTest;
+  direct_enabled: boolean;
+  direct_diagnostics?: DirectDiagnostics;
   robots: LoxoneRobot[];
 }
 

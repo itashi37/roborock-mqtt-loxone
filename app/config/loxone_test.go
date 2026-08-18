@@ -62,6 +62,27 @@ func TestLoadConfigCanDisableLocalMQTT(t *testing.T) {
 	}
 }
 
+func TestLoadConfigDirectLoxoneDefaults(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "config.json")
+	data := []byte(`{
+		"mqtt":{"enabled":false},
+		"roborock":{"username":"user@example.com"},
+		"loxone":{"direct":{"enabled":true,"host":"192.168.1.20"}},
+		"web":{"enabled":true}
+	}`)
+	if err := os.WriteFile(file, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadConfig(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct := loaded.Loxone.Direct
+	if !direct.Enabled || direct.Scheme != "http" || direct.Port != 80 || direct.TimeoutSeconds != 5 || direct.MaxRetries != 3 || direct.InputPrefix != "RR" {
+		t.Fatalf("unexpected Direct defaults: %+v", direct)
+	}
+}
+
 func TestLoadConfigLoxoneCustomTopic(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "config.json")

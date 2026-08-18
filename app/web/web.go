@@ -155,6 +155,7 @@ func (ws *WebServer) setupRoutes() {
 			r.Delete("/devices/{slug}/rooms/{id}", ws.loxoneRoomOverrideDelete)
 			r.Post("/devices/{slug}/command", ws.loxoneCommandTest)
 			r.Post("/mqtt-test", ws.loxoneMQTTTest)
+			r.Post("/direct/resend", ws.loxoneDirectResend)
 			r.Post("/export", ws.loxoneExport)
 		})
 	})

@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mqtt-home/roborock-mqtt/config"
+	loxonedirect "github.com/mqtt-home/roborock-mqtt/loxone/direct"
 	"github.com/mqtt-home/roborock-mqtt/roborock"
 )
 
@@ -30,30 +31,34 @@ type LoxoneMQTTTestStatus struct {
 // LoxoneDependencies are injected by main so HTTP handlers can use the same
 // Phase 1/2 stores and MQTT connection as the bridge.
 type LoxoneDependencies struct {
-	Core           *roborock.LoxoneCoreStore
-	Diagnostics    *roborock.LoxoneDiagnosticStore
-	RoomOverrides  *roborock.LoxoneRoomOverrideStore
-	Capabilities   *roborock.CapabilityStore
-	PublishCommand func(slug, command string) error
-	TestMQTT       func(context.Context) error
-	RefreshRoom    func(slug string)
-	testMu         sync.RWMutex
-	lastMQTTTest   *LoxoneMQTTTestStatus
+	Core              *roborock.LoxoneCoreStore
+	Diagnostics       *roborock.LoxoneDiagnosticStore
+	RoomOverrides     *roborock.LoxoneRoomOverrideStore
+	Capabilities      *roborock.CapabilityStore
+	PublishCommand    func(slug, command string) error
+	TestMQTT          func(context.Context) error
+	RefreshRoom       func(slug string)
+	DirectDiagnostics func() loxonedirect.SyncDiagnostics
+	ResendDirect      func()
+	testMu            sync.RWMutex
+	lastMQTTTest      *LoxoneMQTTTestStatus
 }
 
 type loxoneIntegrationResponse struct {
-	Project               string                `json:"project"`
-	Upstream              string                `json:"upstream"`
-	Enabled               bool                  `json:"enabled"`
-	BridgeStarted         bool                  `json:"bridge_started"`
-	Topic                 string                `json:"topic"`
-	SubscriptionLimit     int                   `json:"subscription_limit"`
-	SubscriptionsPerRobot int                   `json:"subscriptions_per_robot"`
-	SubscriptionsRequired int                   `json:"subscriptions_required"`
-	ExceedsLimit          bool                  `json:"exceeds_limit"`
-	Warning               string                `json:"warning,omitempty"`
-	MQTTTest              *LoxoneMQTTTestStatus `json:"mqtt_test,omitempty"`
-	Robots                []loxoneRobotResponse `json:"robots"`
+	Project               string                        `json:"project"`
+	Upstream              string                        `json:"upstream"`
+	Enabled               bool                          `json:"enabled"`
+	BridgeStarted         bool                          `json:"bridge_started"`
+	Topic                 string                        `json:"topic"`
+	SubscriptionLimit     int                           `json:"subscription_limit"`
+	SubscriptionsPerRobot int                           `json:"subscriptions_per_robot"`
+	SubscriptionsRequired int                           `json:"subscriptions_required"`
+	ExceedsLimit          bool                          `json:"exceeds_limit"`
+	Warning               string                        `json:"warning,omitempty"`
+	MQTTTest              *LoxoneMQTTTestStatus         `json:"mqtt_test,omitempty"`
+	DirectEnabled         bool                          `json:"direct_enabled"`
+	DirectDiagnostics     *loxonedirect.SyncDiagnostics `json:"direct_diagnostics,omitempty"`
+	Robots                []loxoneRobotResponse         `json:"robots"`
 }
 
 type loxoneRobotResponse struct {
@@ -107,6 +112,7 @@ func (ws *WebServer) buildLoxoneIntegration() (loxoneIntegrationResponse, error)
 		Project:               "roborock-mqtt-loxone",
 		Upstream:              "mqtt-home/roborock-mqtt",
 		Enabled:               cfg.Loxone.Enabled,
+		DirectEnabled:         cfg.Loxone.Direct.Enabled,
 		BridgeStarted:         ws.deviceManager != nil,
 		Topic:                 cfg.Loxone.Topic,
 		SubscriptionLimit:     loxoneSubscriptionLimit,
@@ -118,6 +124,10 @@ func (ws *WebServer) buildLoxoneIntegration() (loxoneIntegrationResponse, error)
 		dependencies.testMu.RLock()
 		response.MQTTTest = dependencies.lastMQTTTest
 		dependencies.testMu.RUnlock()
+		if dependencies.DirectDiagnostics != nil {
+			diagnostics := dependencies.DirectDiagnostics()
+			response.DirectDiagnostics = &diagnostics
+		}
 	}
 	if ws.deviceManager == nil {
 		return response, nil
@@ -132,6 +142,16 @@ func (ws *WebServer) buildLoxoneIntegration() (loxoneIntegrationResponse, error)
 		response.Warning = fmt.Sprintf("Standard configuration requires %d subscriptions and exceeds the Loxone limit of %d; export remains available.", response.SubscriptionsRequired, response.SubscriptionLimit)
 	}
 	return response, nil
+}
+
+func (ws *WebServer) loxoneDirectResend(w http.ResponseWriter, _ *http.Request) {
+	dependencies := ws.getLoxoneIntegration()
+	if dependencies == nil || dependencies.ResendDirect == nil {
+		writeLoxoneError(w, http.StatusConflict, fmt.Errorf("Direct Loxone integration is not running"))
+		return
+	}
+	dependencies.ResendDirect()
+	writeLoxoneJSON(w, http.StatusAccepted, map[string]string{"state": "queued"})
 }
 
 func (ws *WebServer) buildLoxoneRobot(device *roborock.ManagedDevice) loxoneRobotResponse {

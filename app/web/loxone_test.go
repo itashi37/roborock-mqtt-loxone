@@ -122,6 +122,19 @@ func TestLoxoneCommandEndpointUsesInjectedPublisher(t *testing.T) {
 	}
 }
 
+func TestDirectResendUsesInjectedSynchronizer(t *testing.T) {
+	loadLoxoneTestConfig(t)
+	server := NewWebServer(nil, &roborock.Client{}, nil)
+	called := false
+	server.SetLoxoneIntegration(&LoxoneDependencies{ResendDirect: func() { called = true }})
+	request := httptest.NewRequest(http.MethodPost, "/api/loxone/direct/resend", nil)
+	response := httptest.NewRecorder()
+	server.router.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || !called {
+		t.Fatalf("resend status=%d called=%v body=%s", response.Code, called, response.Body.String())
+	}
+}
+
 func TestLoxoneRoomsExposeOnlyActiveCommandableSegments(t *testing.T) {
 	loadLoxoneTestConfig(t)
 	client := loxoneTestClientWithRooms(t, []roborock.RoomInfo{

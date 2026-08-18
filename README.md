@@ -97,7 +97,19 @@ Create a `config.json` file:
     "enabled": false,
     "topic": "loxone/roborock",
     "command_debounce_ms": 2000,
-    "command_timeout_seconds": 90
+    "command_timeout_seconds": 90,
+    "direct": {
+      "enabled": false,
+      "scheme": "https",
+      "host": "192.168.1.20",
+      "port": 443,
+      "username": "roborock_bridge",
+      "password": "${LOXONE_PASSWORD}",
+      "timeout_seconds": 5,
+      "max_retries": 3,
+      "retry_delay_ms": 500,
+      "input_prefix": "RR"
+    }
   },
   "web": {
     "enabled": true,
@@ -113,11 +125,19 @@ Environment variables can be used in the config file with `${VAR_NAME}` syntax.
 `true` when omitted so existing installations keep the same behaviour. Setting
 it to `false` lets the Roborock bridge and Web UI run without Mosquitto; the
 separate Roborock Cloud MQTT connection used to communicate with the robots is
-still started normally. Direct Loxone transport is added in the next phase.
+still started normally. Direct Loxone can therefore run without a local broker.
 
 External robot slugs are persisted by Roborock DUID in `device-slugs.json`
 inside the data volume. Renaming or reordering robots therefore no longer
 changes their MQTT topics or API paths.
+
+When `loxone.direct.enabled` is true, changed robot values are pushed to Loxone
+Virtual Inputs using the documented `/dev/sps/io/<input>/<value>` Web Service.
+The default names follow `RR_<slug>_<field>` and can be overridden per robot
+with `loxone.direct.inputs`. Failed values are retried without blocking
+Roborock polling; `POST /api/loxone/direct/resend` queues a full resync. Dock
+service fields are intentionally not sent until their model capabilities and
+status values have been verified.
 
 ### Schedules
 

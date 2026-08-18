@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mqtt-home/roborock-mqtt/config"
+	loxonedirect "github.com/mqtt-home/roborock-mqtt/loxone/direct"
 	"github.com/mqtt-home/roborock-mqtt/roborock"
 	"github.com/mqtt-home/roborock-mqtt/version"
 	"github.com/mqtt-home/roborock-mqtt/web"
@@ -43,6 +44,7 @@ var (
 	deviceStateStore      = roborock.NewDeviceStateStore()
 	capabilityStore       = roborock.NewCapabilityStore()
 	commandCoordinator    *roborock.CommandCoordinator
+	directSynchronizer    *loxonedirect.Synchronizer
 )
 
 func localMQTTEnabled() bool { return config.Get().MQTT.IsEnabled() }
@@ -224,6 +226,17 @@ func wireLoxoneWeb(restClient *roborock.Client) {
 		TestMQTT: loxoneProbe.test,
 		RefreshRoom: func(slug string) {
 			refreshLoxoneCurrentRoom(slug, restClient)
+		},
+		DirectDiagnostics: func() loxonedirect.SyncDiagnostics {
+			if directSynchronizer == nil {
+				return loxonedirect.SyncDiagnostics{Inputs: []loxonedirect.InputDiagnostic{}}
+			}
+			return directSynchronizer.Diagnostics()
+		},
+		ResendDirect: func() {
+			if directSynchronizer != nil {
+				directSynchronizer.ResendAll()
+			}
 		},
 	})
 }
@@ -465,6 +478,10 @@ func executeCommand(dev *roborock.ManagedDevice, action string, segments []int, 
 // startBridge initializes the MQTT bridge after successful authentication.
 func startBridge(restClient *roborock.Client) {
 	cfg := config.Get()
+	if directSynchronizer != nil {
+		directSynchronizer.Close()
+		directSynchronizer = nil
+	}
 	if store, err := roborock.NewLoxoneRoomOverrideStore(dataDir); err != nil {
 		logger.Error("Failed to load Loxone room overrides", "error", err)
 	} else {
@@ -501,9 +518,30 @@ func startBridge(restClient *roborock.Client) {
 		publishLoxoneActivities,
 	)
 	loxoneActivityTracker = commandCoordinator.Tracker()
+	if cfg.Loxone.Direct.Enabled {
+		directClient, err := loxonedirect.NewClient(loxonedirect.ClientConfig{
+			Scheme: cfg.Loxone.Direct.Scheme, Host: cfg.Loxone.Direct.Host, Port: cfg.Loxone.Direct.Port,
+			Username: cfg.Loxone.Direct.Username, Password: cfg.Loxone.Direct.Password,
+			Timeout: time.Duration(cfg.Loxone.Direct.TimeoutSeconds) * time.Second,
+		})
+		if err != nil {
+			logger.Error("Direct Loxone configuration is invalid", "error", err)
+		} else {
+			directSynchronizer = loxonedirect.NewSynchronizer(
+				directClient,
+				loxonedirect.InputMapping{Prefix: cfg.Loxone.Direct.InputPrefix, Overrides: cfg.Loxone.Direct.Inputs},
+				cfg.Loxone.Direct.MaxRetries,
+				time.Duration(cfg.Loxone.Direct.RetryDelayMS)*time.Millisecond,
+				deviceStateStore.All,
+			)
+		}
+	}
 
 	deviceStateStore.Subscribe(func(update roborock.DeviceStateUpdate) {
 		state := update.State
+		if directSynchronizer != nil {
+			directSynchronizer.Update(state)
+		}
 		switch update.Change {
 		case roborock.DeviceStateStatus:
 			publishDeviceStatus(state.Slug, state.Status)
@@ -744,6 +782,9 @@ func main() {
 	}
 	if deviceManager != nil {
 		deviceManager.DisconnectAll()
+	}
+	if directSynchronizer != nil {
+		directSynchronizer.Close()
 	}
 	logger.Info("Shutdown complete")
 }

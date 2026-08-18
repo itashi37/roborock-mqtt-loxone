@@ -45,10 +45,25 @@ func (m MQTTConfig) GatewayConfig() config.MQTTConfig {
 }
 
 type LoxoneConfig struct {
-	Enabled               bool   `json:"enabled"`
-	Topic                 string `json:"topic,omitempty"`
-	CommandDebounceMS     int    `json:"command_debounce_ms,omitempty"`
-	CommandTimeoutSeconds int    `json:"command_timeout_seconds,omitempty"`
+	Enabled               bool               `json:"enabled"`
+	Topic                 string             `json:"topic,omitempty"`
+	CommandDebounceMS     int                `json:"command_debounce_ms,omitempty"`
+	CommandTimeoutSeconds int                `json:"command_timeout_seconds,omitempty"`
+	Direct                DirectLoxoneConfig `json:"direct,omitempty"`
+}
+
+type DirectLoxoneConfig struct {
+	Enabled        bool                         `json:"enabled"`
+	Scheme         string                       `json:"scheme,omitempty"`
+	Host           string                       `json:"host,omitempty"`
+	Port           int                          `json:"port,omitempty"`
+	Username       string                       `json:"username,omitempty"`
+	Password       string                       `json:"password,omitempty"`
+	TimeoutSeconds int                          `json:"timeout_seconds,omitempty"`
+	MaxRetries     int                          `json:"max_retries,omitempty"`
+	RetryDelayMS   int                          `json:"retry_delay_ms,omitempty"`
+	InputPrefix    string                       `json:"input_prefix,omitempty"`
+	Inputs         map[string]map[string]string `json:"inputs,omitempty"`
 }
 
 type TimeSlot struct {
@@ -168,6 +183,29 @@ func LoadConfig(file string) (Config, error) {
 	}
 	if cfg.Loxone.CommandTimeoutSeconds <= 0 {
 		cfg.Loxone.CommandTimeoutSeconds = 90
+	}
+	cfg.Loxone.Direct.Scheme = strings.ToLower(strings.TrimSpace(cfg.Loxone.Direct.Scheme))
+	if cfg.Loxone.Direct.Scheme == "" {
+		cfg.Loxone.Direct.Scheme = "http"
+	}
+	if cfg.Loxone.Direct.Port <= 0 {
+		if cfg.Loxone.Direct.Scheme == "https" {
+			cfg.Loxone.Direct.Port = 443
+		} else {
+			cfg.Loxone.Direct.Port = 80
+		}
+	}
+	if cfg.Loxone.Direct.TimeoutSeconds <= 0 {
+		cfg.Loxone.Direct.TimeoutSeconds = 5
+	}
+	if cfg.Loxone.Direct.MaxRetries <= 0 {
+		cfg.Loxone.Direct.MaxRetries = 3
+	}
+	if cfg.Loxone.Direct.RetryDelayMS <= 0 {
+		cfg.Loxone.Direct.RetryDelayMS = 500
+	}
+	if strings.TrimSpace(cfg.Loxone.Direct.InputPrefix) == "" {
+		cfg.Loxone.Direct.InputPrefix = "RR"
 	}
 
 	if cfg.Roborock.ScheduleSignals.PublicHoliday == "" {
