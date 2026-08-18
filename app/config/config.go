@@ -45,11 +45,35 @@ func (m MQTTConfig) GatewayConfig() config.MQTTConfig {
 }
 
 type LoxoneConfig struct {
-	Enabled               bool               `json:"enabled"`
-	Topic                 string             `json:"topic,omitempty"`
-	CommandDebounceMS     int                `json:"command_debounce_ms,omitempty"`
-	CommandTimeoutSeconds int                `json:"command_timeout_seconds,omitempty"`
-	Direct                DirectLoxoneConfig `json:"direct,omitempty"`
+	Enabled               bool                               `json:"enabled"`
+	Topic                 string                             `json:"topic,omitempty"`
+	CommandDebounceMS     int                                `json:"command_debounce_ms,omitempty"`
+	CommandTimeoutSeconds int                                `json:"command_timeout_seconds,omitempty"`
+	Direct                DirectLoxoneConfig                 `json:"direct,omitempty"`
+	Devices               map[string]DeviceIntegrationConfig `json:"devices,omitempty"`
+}
+
+type DeviceIntegrationConfig struct {
+	MQTT   *bool `json:"mqtt,omitempty"`
+	Direct *bool `json:"direct,omitempty"`
+}
+
+func (l LoxoneConfig) DeviceModes(deviceID, slug string) (mqttEnabled, directEnabled bool) {
+	mqttEnabled = true
+	directEnabled = l.Direct.Enabled
+	device, ok := l.Devices[deviceID]
+	if !ok {
+		device, ok = l.Devices[slug]
+	}
+	if ok {
+		if device.MQTT != nil {
+			mqttEnabled = *device.MQTT
+		}
+		if device.Direct != nil {
+			directEnabled = *device.Direct
+		}
+	}
+	return mqttEnabled, directEnabled
 }
 
 type DirectLoxoneConfig struct {

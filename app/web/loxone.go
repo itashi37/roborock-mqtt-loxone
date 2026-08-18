@@ -64,16 +64,18 @@ type loxoneIntegrationResponse struct {
 }
 
 type loxoneRobotResponse struct {
-	Slug         string                      `json:"slug"`
-	Name         string                      `json:"name"`
-	Model        string                      `json:"model"`
-	Online       bool                        `json:"online"`
-	Core         roborock.LoxoneCore         `json:"core"`
-	Topics       loxoneTopics                `json:"topics"`
-	Rooms        []loxoneRoomResponse        `json:"rooms"`
-	Scenes       []loxoneSceneResponse       `json:"scenes"`
-	Diagnostics  roborock.LoxoneDiagnostics  `json:"diagnostics"`
-	Capabilities roborock.DeviceCapabilities `json:"capabilities"`
+	Slug          string                      `json:"slug"`
+	Name          string                      `json:"name"`
+	Model         string                      `json:"model"`
+	Online        bool                        `json:"online"`
+	MQTTEnabled   bool                        `json:"mqtt_enabled"`
+	DirectEnabled bool                        `json:"direct_enabled"`
+	Core          roborock.LoxoneCore         `json:"core"`
+	Topics        loxoneTopics                `json:"topics"`
+	Rooms         []loxoneRoomResponse        `json:"rooms"`
+	Scenes        []loxoneSceneResponse       `json:"scenes"`
+	Diagnostics   roborock.LoxoneDiagnostics  `json:"diagnostics"`
+	Capabilities  roborock.DeviceCapabilities `json:"capabilities"`
 }
 
 type loxoneTopics struct {
@@ -158,11 +160,14 @@ func (ws *WebServer) loxoneDirectResend(w http.ResponseWriter, _ *http.Request) 
 
 func (ws *WebServer) buildLoxoneRobot(device *roborock.ManagedDevice) loxoneRobotResponse {
 	base := strings.TrimSuffix(config.Get().Loxone.Topic, "/") + "/" + device.Slug
+	mqttForDevice, directForDevice := config.Get().Loxone.DeviceModes(device.Info.DID, device.Slug)
 	robot := loxoneRobotResponse{
-		Slug:   device.Slug,
-		Name:   device.Info.Name,
-		Model:  device.Info.Model,
-		Online: device.CloudMQTT != nil && device.CloudMQTT.IsConnected(),
+		Slug:          device.Slug,
+		Name:          device.Info.Name,
+		Model:         device.Info.Model,
+		Online:        device.CloudMQTT != nil && device.CloudMQTT.IsConnected(),
+		MQTTEnabled:   config.Get().MQTT.IsEnabled() && mqttForDevice,
+		DirectEnabled: config.Get().Loxone.Direct.Enabled && directForDevice,
 		Topics: loxoneTopics{
 			Core:        base + "/core",
 			Activity:    base + "/activity",

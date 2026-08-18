@@ -71,6 +71,8 @@ export interface LoxoneRobot {
   name: string;
   model: string;
   online: boolean;
+  mqtt_enabled: boolean;
+  direct_enabled: boolean;
   core: LoxoneCore;
   topics: {
     core: string;

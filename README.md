@@ -114,6 +114,9 @@ Create a `config.json` file:
       "allowed_cidrs": ["192.168.1.0/24"],
       "allow_get_commands": false,
       "rate_limit_per_minute": 30
+    },
+    "devices": {
+      "ROBOROCK_DUID": {"mqtt": true, "direct": true}
     }
   },
   "web": {
@@ -180,6 +183,24 @@ submission returns HTTP `202` with its command ID. The latest correlated state
 is available from `GET /api/loxone/direct/v1/commands/{id}` using the same API
 authentication. Unsupported or unconfirmed capabilities are rejected rather
 than sent speculatively to the robot.
+
+### MQTT, Direct, or Both
+
+The transports can be selected independently and overridden per stable
+Roborock DUID:
+
+| Mode | `mqtt.enabled` | `loxone.enabled` | `loxone.direct.enabled` |
+|---|---:|---:|---:|
+| MQTT only | `true` | `true` | `false` |
+| Direct only | `false` | `false` | `true` |
+| Both | `true` | `true` | `true` |
+
+Per-device `mqtt` and `direct` booleans default to their global transport
+setting. If the local broker is running, the bridge also reconciles a persisted
+retained-topic ledger and deletes topics belonging to removed robots, changed
+slugs, or disabled per-robot MQTT integrations. When MQTT is globally disabled,
+cleanup is intentionally deferred until a broker is enabled again; Direct-only
+startup never contacts or requires Mosquitto.
 
 ### Schedules
 

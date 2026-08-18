@@ -49,8 +49,28 @@ var (
 
 func localMQTTEnabled() bool { return config.Get().MQTT.IsEnabled() }
 
-func loxoneMQTTEnabled() bool {
-	return localMQTTEnabled() && config.Get().Loxone.Enabled
+func deviceIntegrationModes(slug string) (bool, bool) {
+	deviceID := ""
+	if deviceManager != nil {
+		if device := deviceManager.GetDevice(slug); device != nil {
+			deviceID = device.Info.DID
+		}
+	}
+	return config.Get().Loxone.DeviceModes(deviceID, slug)
+}
+
+func localMQTTEnabledFor(slug string) bool {
+	mqttEnabled, _ := deviceIntegrationModes(slug)
+	return localMQTTEnabled() && mqttEnabled
+}
+
+func directLoxoneEnabledFor(slug string) bool {
+	_, directEnabled := deviceIntegrationModes(slug)
+	return config.Get().Loxone.Direct.Enabled && directEnabled
+}
+
+func loxoneMQTTEnabledFor(slug string) bool {
+	return localMQTTEnabledFor(slug) && config.Get().Loxone.Enabled
 }
 
 type mqttLoopbackProbe struct {
@@ -101,7 +121,7 @@ func (p *mqttLoopbackProbe) test(ctx context.Context) error {
 }
 
 func publishDeviceMap(slug string, pngData []byte) {
-	if !localMQTTEnabled() {
+	if !localMQTTEnabledFor(slug) {
 		return
 	}
 	cfg := config.Get()
@@ -111,7 +131,7 @@ func publishDeviceMap(slug string, pngData []byte) {
 }
 
 func publishDeviceCurrentRoom(slug string, room *roborock.CurrentRoom) {
-	if !localMQTTEnabled() {
+	if !localMQTTEnabledFor(slug) {
 		return
 	}
 	cfg := config.Get()
@@ -132,8 +152,57 @@ func loxoneTopic(slug, suffix string) string {
 	return base + "/" + slug + "/" + suffix
 }
 
+func expectedRetainedTopics() []string {
+	if deviceManager == nil || !localMQTTEnabled() {
+		return nil
+	}
+	cfg := config.Get()
+	topics := make([]string, 0)
+	legacySuffixes := []string{"availability", "status", "map", "current_room", "scenes", "schedule"}
+	loxoneSuffixes := []string{
+		"online", "state", "battery", "current_room_id", "current_room_name", "clean_area", "clean_time_seconds",
+		"error_code", "error_text", "last_seen", "maintenance/main_brush", "maintenance/side_brush",
+		"maintenance/filter", "maintenance/sensor", "core", "last_command",
+	}
+	for _, device := range deviceManager.GetDevices() {
+		if !localMQTTEnabledFor(device.Slug) {
+			continue
+		}
+		base := strings.TrimSuffix(cfg.MQTT.Topic, "/") + "/" + device.Slug + "/"
+		for _, suffix := range legacySuffixes {
+			topics = append(topics, base+suffix)
+		}
+		if loxoneMQTTEnabledFor(device.Slug) {
+			for _, suffix := range loxoneSuffixes {
+				topics = append(topics, loxoneTopic(device.Slug, suffix))
+			}
+		}
+	}
+	return topics
+}
+
+func cleanupStaleRetainedTopics() {
+	if !localMQTTEnabled() {
+		return
+	}
+	ledger, err := roborock.NewRetainedTopicLedger(dataDir)
+	if err != nil {
+		logger.Warn("Failed to load retained topic ledger", "error", err)
+		return
+	}
+	stale, err := ledger.Reconcile(expectedRetainedTopics())
+	if err != nil {
+		logger.Warn("Failed to update retained topic ledger", "error", err)
+		return
+	}
+	for _, topic := range stale {
+		mqtt.PublishAbsolute(topic, "", true)
+		logger.Info("Cleared obsolete retained MQTT topic", "topic", topic)
+	}
+}
+
 func publishLoxoneScalar(slug, suffix, payload string) {
-	if !loxoneMQTTEnabled() {
+	if !loxoneMQTTEnabledFor(slug) {
 		return
 	}
 	topic := loxoneTopic(slug, suffix)
@@ -157,7 +226,7 @@ func publishLoxoneActivities(slug string, activities []roborock.LoxoneActivity) 
 			logger.Error("Failed to marshal Loxone activity", "device", slug, "error", err)
 			continue
 		}
-		if loxoneMQTTEnabled() {
+		if loxoneMQTTEnabledFor(slug) {
 			mqtt.PublishAbsolute(loxoneTopic(slug, "activity"), string(data), false)
 			if activity.Type == "command" {
 				mqtt.PublishAbsolute(loxoneTopic(slug, "last_command"), string(data), true)
@@ -239,6 +308,9 @@ func wireLoxoneWeb(restClient *roborock.Client) {
 			}
 		},
 		SubmitCommand: func(slug, command string) roborock.CommandSubmission {
+			if !directLoxoneEnabledFor(slug) {
+				return roborock.CommandSubmission{Command: command, State: "failed", Error: "Direct Loxone is disabled for this robot", Failure: "not_found"}
+			}
 			if commandCoordinator == nil {
 				return roborock.CommandSubmission{Command: command, State: "failed", Error: "command coordinator is not ready", Failure: "conflict"}
 			}
@@ -291,7 +363,7 @@ func publishLoxoneCurrentRoom(slug string, room *roborock.CurrentRoom) {
 }
 
 func publishDeviceScenes(slug string, scenes []roborock.Scene) {
-	if !localMQTTEnabled() {
+	if !localMQTTEnabledFor(slug) {
 		return
 	}
 	cfg := config.Get()
@@ -308,7 +380,7 @@ func publishDeviceScenes(slug string, scenes []roborock.Scene) {
 }
 
 func publishDeviceSchedule(slug string, state *roborock.ScheduleState) {
-	if !localMQTTEnabled() {
+	if !localMQTTEnabledFor(slug) {
 		return
 	}
 	cfg := config.Get()
@@ -329,7 +401,7 @@ func publishDeviceSchedule(slug string, state *roborock.ScheduleState) {
 // (e.g. the wall-display Wall API) use this to mark a device unavailable rather
 // than trust a stale retained `<topic>/<slug>/status`.
 func publishDeviceAvailability(slug string, online bool) {
-	if !localMQTTEnabled() {
+	if !localMQTTEnabledFor(slug) {
 		return
 	}
 	cfg := config.Get()
@@ -344,7 +416,7 @@ func publishDeviceAvailability(slug string, online bool) {
 }
 
 func publishDeviceStatus(slug string, status *roborock.PublishedStatus) {
-	if !localMQTTEnabled() {
+	if !localMQTTEnabledFor(slug) {
 		return
 	}
 	cfg := config.Get()
@@ -368,6 +440,9 @@ func subscribeToCommands() {
 
 	for _, md := range deviceManager.GetDevices() {
 		dev := md // capture
+		if !localMQTTEnabledFor(dev.Slug) {
+			continue
+		}
 		topic := cfg.MQTT.Topic + "/" + dev.Slug + "/set"
 
 		logger.Info("Subscribing to MQTT commands", "device", dev.Slug, "topic", topic)
@@ -400,12 +475,15 @@ func subscribeToCommands() {
 }
 
 func subscribeToLoxoneCommands(restClient *roborock.Client) {
-	if !loxoneMQTTEnabled() || commandCoordinator == nil {
+	if !localMQTTEnabled() || commandCoordinator == nil {
 		return
 	}
 
 	for _, md := range deviceManager.GetDevices() {
 		dev := md // capture
+		if !loxoneMQTTEnabledFor(dev.Slug) {
+			continue
+		}
 		topic := loxoneTopic(dev.Slug, "command")
 
 		logger.Info("Subscribing to Loxone MQTT commands", "device", dev.Slug, "topic", topic)
@@ -509,6 +587,7 @@ func startBridge(restClient *roborock.Client) {
 
 	// Create device manager for all devices
 	deviceManager = roborock.NewDeviceManager(restClient.GetLoginData(), restClient.GetDevices(), restClient, dataDir)
+	cleanupStaleRetainedTopics()
 	deviceStateStore = roborock.NewDeviceStateStore()
 	capabilityStore = roborock.NewCapabilityStore()
 	commandCoordinator = roborock.NewCommandCoordinator(
@@ -539,14 +618,23 @@ func startBridge(restClient *roborock.Client) {
 				loxonedirect.InputMapping{Prefix: cfg.Loxone.Direct.InputPrefix, Overrides: cfg.Loxone.Direct.Inputs},
 				cfg.Loxone.Direct.MaxRetries,
 				time.Duration(cfg.Loxone.Direct.RetryDelayMS)*time.Millisecond,
-				deviceStateStore.All,
+				func() []roborock.InternalDeviceState {
+					states := deviceStateStore.All()
+					filtered := states[:0]
+					for _, state := range states {
+						if directLoxoneEnabledFor(state.Slug) {
+							filtered = append(filtered, state)
+						}
+					}
+					return filtered
+				},
 			)
 		}
 	}
 
 	deviceStateStore.Subscribe(func(update roborock.DeviceStateUpdate) {
 		state := update.State
-		if directSynchronizer != nil {
+		if directSynchronizer != nil && directLoxoneEnabledFor(state.Slug) {
 			directSynchronizer.Update(state)
 		}
 		switch update.Change {
@@ -633,9 +721,12 @@ func startBridge(restClient *roborock.Client) {
 	// Subscribe to local MQTT commands per device
 	subscribeToCommands()
 	subscribeToLoxoneCommands(restClient)
-	if loxoneMQTTEnabled() {
+	if localMQTTEnabled() && cfg.Loxone.Enabled {
 		for _, device := range deviceManager.GetDevices() {
 			dev := device
+			if !loxoneMQTTEnabledFor(dev.Slug) {
+				continue
+			}
 			mqtt.Subscribe(loxoneTopic(dev.Slug, "last_command"), func(_ string, payload []byte) {
 				var activity roborock.LoxoneActivity
 				if err := json.Unmarshal(payload, &activity); err == nil {

@@ -83,6 +83,25 @@ func TestLoadConfigDirectLoxoneDefaults(t *testing.T) {
 	}
 }
 
+func TestDeviceIntegrationModesPreferStableDeviceID(t *testing.T) {
+	falseValue, trueValue := false, true
+	config := LoxoneConfig{
+		Direct: DirectLoxoneConfig{Enabled: true},
+		Devices: map[string]DeviceIntegrationConfig{
+			"did-a": {MQTT: &falseValue, Direct: &trueValue},
+			"robot": {MQTT: &trueValue, Direct: &falseValue},
+		},
+	}
+	mqttEnabled, directEnabled := config.DeviceModes("did-a", "robot")
+	if mqttEnabled || !directEnabled {
+		t.Fatalf("DUID modes not preferred: mqtt=%v direct=%v", mqttEnabled, directEnabled)
+	}
+	mqttEnabled, directEnabled = config.DeviceModes("did-unknown", "unknown")
+	if !mqttEnabled || !directEnabled {
+		t.Fatalf("unexpected defaults: mqtt=%v direct=%v", mqttEnabled, directEnabled)
+	}
+}
+
 func TestLoadConfigLoxoneCustomTopic(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "config.json")
