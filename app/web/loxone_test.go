@@ -100,6 +100,18 @@ func TestSafeCSV(t *testing.T) {
 	}
 }
 
+func TestFleetHealthEndpointReportsOfflineEmptyFleet(t *testing.T) {
+	rest := roborock.NewClient("http://example.invalid", "", "", "")
+	manager := roborock.NewDeviceManager(nil, nil, rest, t.TempDir())
+	server := NewWebServer(manager, rest, nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/fleet/health", nil)
+	response := httptest.NewRecorder()
+	server.router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"health":"offline"`) {
+		t.Fatalf("unexpected response %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestLoxoneCommandEndpointUsesInjectedPublisher(t *testing.T) {
 	loadLoxoneTestConfig(t)
 	manager := roborock.NewDeviceManager(&roborock.LoginData{}, []roborock.DeviceInfo{{Name: "Vacuum"}}, nil, t.TempDir())

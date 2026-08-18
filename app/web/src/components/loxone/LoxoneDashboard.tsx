@@ -1,5 +1,5 @@
 import { Activity, AlertTriangle, Bot, CheckCircle2, Radio, Server } from 'lucide-react';
-import type { LoxoneActivity, LoxoneMQTTTest } from '@/types/loxone';
+import type { FleetHealth, LoxoneActivity, LoxoneMQTTTest } from '@/types/loxone';
 import { formatActivity } from '@/lib/loxone';
 import { relativeTimestamp, StatusBadge } from './LoxoneUI';
 
@@ -12,6 +12,7 @@ interface DashboardProps {
   subscriptions: number;
   limit: number;
   latest?: { name: string; activity: LoxoneActivity };
+  fleet?: FleetHealth;
 }
 
 export function LoxoneDashboard(props: DashboardProps) {
@@ -31,7 +32,8 @@ export function LoxoneDashboard(props: DashboardProps) {
       </SummaryCard>
       <SummaryCard icon={<Bot className="h-5 w-5" />} label="Robots">
         <strong className="text-lg">{props.robotCount}</strong>
-        <span className="text-xs text-muted-foreground">{props.onlineRobots} online</span>
+        <span className="text-xs text-muted-foreground">{props.onlineRobots} online · {props.fleet?.in_error ?? 0} errors</span>
+        {props.fleet && <StatusBadge tone={props.fleet.health === 'healthy' ? 'green' : props.fleet.health === 'degraded' ? 'amber' : 'red'}>{props.fleet.health}</StatusBadge>}
       </SummaryCard>
       <SummaryCard icon={<Activity className="h-5 w-5" />} label="Subscriptions">
         <strong className={props.subscriptions > props.limit ? 'text-amber-500' : ''}>{props.subscriptions} / {props.limit}</strong>

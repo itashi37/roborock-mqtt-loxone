@@ -849,6 +849,9 @@ func startBridge(restClient *roborock.Client) {
 		capabilities := capabilityStore.UpdateInventory(slug, mappings, roomsKnown, scenes, scenesKnown, time.Now())
 		deviceStateStore.UpdateInventory(slug, mappings, scenes, capabilities, time.Now())
 	})
+	deviceManager.SetHealthCallback(func(slug string, health roborock.DeviceHealth) {
+		deviceStateStore.UpdateHealth(slug, health, time.Now())
+	})
 	configureDirectLoxone()
 	if err := configureLocalMQTT(restClient); err != nil {
 		logger.Error("Failed to start local MQTT integration; continuing without it", "error", err)

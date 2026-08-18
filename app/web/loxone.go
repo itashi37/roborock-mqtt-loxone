@@ -61,6 +61,7 @@ type loxoneIntegrationResponse struct {
 	DirectEnabled         bool                          `json:"direct_enabled"`
 	DirectDiagnostics     *loxonedirect.SyncDiagnostics `json:"direct_diagnostics,omitempty"`
 	Robots                []loxoneRobotResponse         `json:"robots"`
+	Fleet                 *roborock.FleetHealth         `json:"fleet,omitempty"`
 }
 
 type loxoneRobotResponse struct {
@@ -76,6 +77,7 @@ type loxoneRobotResponse struct {
 	Scenes        []loxoneSceneResponse       `json:"scenes"`
 	Diagnostics   roborock.LoxoneDiagnostics  `json:"diagnostics"`
 	Capabilities  roborock.DeviceCapabilities `json:"capabilities"`
+	Health        roborock.DeviceHealth       `json:"health"`
 }
 
 type loxoneTopics struct {
@@ -136,6 +138,8 @@ func (ws *WebServer) buildLoxoneIntegration() (loxoneIntegrationResponse, error)
 	if ws.deviceManager == nil {
 		return response, nil
 	}
+	fleet := ws.deviceManager.FleetHealth()
+	response.Fleet = &fleet
 
 	for _, device := range ws.deviceManager.GetDevices() {
 		response.Robots = append(response.Robots, ws.buildLoxoneRobot(device))
@@ -168,6 +172,7 @@ func (ws *WebServer) buildLoxoneRobot(device *roborock.ManagedDevice) loxoneRobo
 		Online:        device.CloudMQTT != nil && device.CloudMQTT.IsConnected(),
 		MQTTEnabled:   config.Get().MQTT.IsEnabled() && mqttForDevice,
 		DirectEnabled: config.Get().Loxone.Direct.Enabled && directForDevice,
+		Health:        ws.deviceManager.DeviceHealth(device.Slug),
 		Topics: loxoneTopics{
 			Core:        base + "/core",
 			Activity:    base + "/activity",

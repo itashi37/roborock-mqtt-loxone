@@ -90,6 +90,33 @@ export interface LoxoneRobot {
   scenes: LoxoneScene[];
   diagnostics: LoxoneDiagnostics;
   capabilities: RobotCapabilities;
+  health: DeviceHealth;
+}
+
+export interface DeviceHealth {
+  slug: string;
+  online: boolean;
+  in_error: boolean;
+  error_code: number;
+  dock_state: string;
+  last_poll_attempt?: string;
+  last_poll_success?: string;
+  last_communication?: string;
+  status_latency_ms: number;
+  consecutive_failures: number;
+  backoff_seconds: number;
+  next_poll_at?: string;
+  last_error?: string;
+}
+
+export interface FleetHealth {
+  health: 'healthy' | 'degraded' | 'offline';
+  updated_at: string;
+  robots: number;
+  online: number;
+  in_error: number;
+  poll_failures: number;
+  devices: DeviceHealth[];
 }
 
 export interface LoxoneMQTTTest {
@@ -131,6 +158,7 @@ export interface LoxoneIntegration {
   direct_enabled: boolean;
   direct_diagnostics?: DirectDiagnostics;
   robots: LoxoneRobot[];
+  fleet?: FleetHealth;
 }
 
 export interface LoxoneExportSelection {

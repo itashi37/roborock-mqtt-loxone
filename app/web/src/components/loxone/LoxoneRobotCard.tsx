@@ -36,7 +36,7 @@ export function LoxoneRobotCard(props: Props) {
     <header className="border-b border-border p-4 md:p-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-xl font-semibold">{robot.name}</h2><StatusBadge tone={online ? 'green' : 'red'}>{online ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}{online ? 'Online' : 'Offline'}</StatusBadge><StatusBadge tone={stateTone(core.state)}>{displayState(core.state)}</StatusBadge></div>
+          <div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-xl font-semibold">{robot.name}</h2><StatusBadge tone={online ? 'green' : 'red'}>{online ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}{online ? 'Online' : 'Offline'}</StatusBadge><StatusBadge tone={stateTone(core.state)}>{displayState(core.state)}</StatusBadge>{robot.mqtt_enabled && <StatusBadge tone="blue">MQTT</StatusBadge>}{robot.direct_enabled && <StatusBadge tone="blue">Direct</StatusBadge>}</div>
           <p className="mt-1 text-xs text-muted-foreground">{robot.model || 'Unknown model'} · {robot.slug}</p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -52,6 +52,7 @@ export function LoxoneRobotCard(props: Props) {
         <Metric label="Last seen"><span className="flex items-center gap-2"><Clock className="h-4 w-4 text-muted-foreground" />{formatTimestamp(core.last_seen)}</span></Metric>
       </div>
       <div className="mt-4 rounded-lg bg-muted/60 px-3 py-2 text-sm"><span className="text-muted-foreground">Last command:</span> <strong>{lastCommand ? formatActivity(lastCommand) : 'None recorded'}</strong></div>
+      <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground"><span>Dock: <strong className="text-foreground">{robot.health.dock_state || 'unknown'}</strong></span><span>Status API: <strong className="text-foreground">{robot.health.status_latency_ms || 0} ms</strong></span><span>Poll failures: <strong className={robot.health.consecutive_failures ? 'text-red-500' : 'text-foreground'}>{robot.health.consecutive_failures || 0}</strong></span><span>Backoff: <strong className="text-foreground">{robot.health.backoff_seconds || 0}s</strong></span></div>
     </header>
 
     <div className="space-y-7 p-4 md:p-5">

@@ -13,6 +13,7 @@ const (
 	DeviceStateAvailability DeviceStateChange = "availability"
 	DeviceStateRoom         DeviceStateChange = "current_room"
 	DeviceStateInventory    DeviceStateChange = "inventory"
+	DeviceStateHealth       DeviceStateChange = "health"
 )
 
 // InternalDeviceState is the transport-independent source of truth consumed by
@@ -28,7 +29,15 @@ type InternalDeviceState struct {
 	RoomMappings []RoomMapping      `json:"room_mappings,omitempty"`
 	Scenes       []Scene            `json:"scenes,omitempty"`
 	Capabilities DeviceCapabilities `json:"capabilities"`
+	Health       DeviceHealth       `json:"health"`
 	UpdatedAt    time.Time          `json:"updated_at"`
+}
+
+func (s *DeviceStateStore) UpdateHealth(slug string, health DeviceHealth, now time.Time) {
+	s.update(slug, DeviceStateHealth, func(state *InternalDeviceState) {
+		state.Health = health
+		state.UpdatedAt = now
+	})
 }
 
 type DeviceStateUpdate struct {

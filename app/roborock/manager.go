@@ -96,11 +96,13 @@ type DeviceManager struct {
 	loginData      *LoginData
 	restClient     *Client
 	runTracker     *RunTracker
+	health         *FleetHealthStore
 	mu             sync.RWMutex
 	onStatus       func(slug string, status *PublishedStatus)
 	onMap          func(slug string, pngData []byte)
 	onAvailability func(slug string, online bool)
 	onInventory    func(slug string, mappings []RoomMapping, roomsKnown bool, scenes []Scene, scenesKnown bool)
+	onHealth       func(slug string, health DeviceHealth)
 }
 
 // NewDeviceManager creates a manager for the given devices.
@@ -143,9 +145,26 @@ func NewDeviceManager(loginData *LoginData, devices []DeviceInfo, restClient *Cl
 		dm.devices = append(dm.devices, md)
 		dm.bySlug[slug] = md
 	}
+	dm.health = NewFleetHealthStore(slugs)
 
 	return dm
 }
+
+func (dm *DeviceManager) SetHealthCallback(callback func(slug string, health DeviceHealth)) {
+	dm.onHealth = callback
+}
+
+func (dm *DeviceManager) notifyHealth(slug string, health DeviceHealth) {
+	if dm.onHealth != nil {
+		dm.onHealth(slug, health)
+	}
+}
+
+func (dm *DeviceManager) FleetHealth() FleetHealth {
+	return dm.health.Snapshot(time.Now())
+}
+
+func (dm *DeviceManager) DeviceHealth(slug string) DeviceHealth { return dm.health.Get(slug) }
 
 // SetStatusCallback sets the function called when any device's status changes.
 func (dm *DeviceManager) SetStatusCallback(cb func(slug string, status *PublishedStatus)) {
@@ -223,14 +242,17 @@ func (dm *DeviceManager) ConnectAll() {
 			if dm.onStatus != nil {
 				dm.onStatus(dev.Slug, published)
 			}
+			dm.notifyHealth(dev.Slug, dm.health.MarkCommunication(dev.Slug, published, time.Now()))
 		})
 		cloudMQTT.SetAvailabilityCallback(func(online bool) {
+			dm.notifyHealth(dev.Slug, dm.health.MarkOnline(dev.Slug, online, time.Now()))
 			if dm.onAvailability != nil {
 				dm.onAvailability(dev.Slug, online)
 			}
 		})
 
 		if err := cloudMQTT.Connect(); err != nil {
+			dm.notifyHealth(dev.Slug, dm.health.MarkFailure(dev.Slug, "cloud MQTT connection failed", time.Now()))
 			logger.Error("Failed to connect device", "device", dev.Info.Name, "slug", dev.Slug, "error", err)
 			continue
 		}
@@ -335,9 +357,16 @@ func (dm *DeviceManager) PollAll() {
 		if md.CloudMQTT == nil || !md.CloudMQTT.IsConnected() {
 			continue
 		}
+		now := time.Now()
+		if !dm.health.ShouldPoll(md.Slug, now) {
+			continue
+		}
+		dm.notifyHealth(md.Slug, dm.health.MarkAttempt(md.Slug, now))
 
+		started := time.Now()
 		status, err := md.CloudMQTT.PollStatus()
 		if err != nil {
+			dm.notifyHealth(md.Slug, dm.health.MarkFailure(md.Slug, "status poll failed", time.Now()))
 			logger.Error("Failed to poll status", "device", md.Slug, "error", err)
 			continue
 		}
@@ -359,6 +388,7 @@ func (dm *DeviceManager) PollAll() {
 		if status.InCleaning > 0 {
 			published.CleanPercent = status.CleanPercent
 		}
+		dm.notifyHealth(md.Slug, dm.health.MarkSuccess(md.Slug, published, time.Since(started), time.Now()))
 
 		consumables, err := md.CloudMQTT.PollConsumables()
 		if err != nil {
