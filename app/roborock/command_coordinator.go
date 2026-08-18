@@ -21,6 +21,7 @@ type CommandSubmission struct {
 	State    string                `json:"state"`
 	Error    string                `json:"error,omitempty"`
 	Accepted bool                  `json:"accepted"`
+	Failure  string                `json:"-"`
 	Decision LoxoneCommandDecision `json:"-"`
 }
 
@@ -131,7 +132,25 @@ func submissionFromDecision(raw string, decision LoxoneCommandDecision) CommandS
 	if result.State == "completed" {
 		result.Accepted = true
 	}
+	if result.State == "failed" {
+		result.Failure = classifyCommandFailure(result.Error)
+	}
 	return result
+}
+
+func classifyCommandFailure(message string) string {
+	message = strings.ToLower(message)
+	switch {
+	case strings.Contains(message, "unknown robot"), strings.Contains(message, "unknown scene"),
+		strings.Contains(message, "unknown or inactive room"), strings.Contains(message, "not supported"),
+		strings.Contains(message, "capability"):
+		return "not_found"
+	case strings.Contains(message, "offline"), strings.Contains(message, "duplicate"),
+		strings.Contains(message, "incompatible"), strings.Contains(message, "status unavailable"):
+		return "conflict"
+	default:
+		return "invalid"
+	}
 }
 
 func validateCommandInventory(command LoxoneCommand, context CommandContext) error {
@@ -158,6 +177,22 @@ func validateCommandInventory(command LoxoneCommand, context CommandContext) err
 		}
 		if context.Capabilities.Scenes.Supported != nil && !*context.Capabilities.Scenes.Supported {
 			return fmt.Errorf("scenes are not supported by this robot")
+		}
+	case "locate":
+		if context.Capabilities.Locate.Supported == nil || !*context.Capabilities.Locate.Supported {
+			return fmt.Errorf("capability locate is not confirmed")
+		}
+	case "set_fan_speed":
+		if context.Capabilities.Fan.Supported != nil && !*context.Capabilities.Fan.Supported {
+			return fmt.Errorf("fan control is not supported by this robot")
+		}
+	case "set_mop_mode":
+		if context.Capabilities.Mop.Supported != nil && !*context.Capabilities.Mop.Supported {
+			return fmt.Errorf("mop control is not supported by this robot")
+		}
+	case "set_water_box":
+		if context.Capabilities.Water.Supported != nil && !*context.Capabilities.Water.Supported {
+			return fmt.Errorf("water control is not supported by this robot")
 		}
 	}
 	return nil

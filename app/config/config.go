@@ -53,17 +53,22 @@ type LoxoneConfig struct {
 }
 
 type DirectLoxoneConfig struct {
-	Enabled        bool                         `json:"enabled"`
-	Scheme         string                       `json:"scheme,omitempty"`
-	Host           string                       `json:"host,omitempty"`
-	Port           int                          `json:"port,omitempty"`
-	Username       string                       `json:"username,omitempty"`
-	Password       string                       `json:"password,omitempty"`
-	TimeoutSeconds int                          `json:"timeout_seconds,omitempty"`
-	MaxRetries     int                          `json:"max_retries,omitempty"`
-	RetryDelayMS   int                          `json:"retry_delay_ms,omitempty"`
-	InputPrefix    string                       `json:"input_prefix,omitempty"`
-	Inputs         map[string]map[string]string `json:"inputs,omitempty"`
+	Enabled            bool                         `json:"enabled"`
+	Scheme             string                       `json:"scheme,omitempty"`
+	Host               string                       `json:"host,omitempty"`
+	Port               int                          `json:"port,omitempty"`
+	Username           string                       `json:"username,omitempty"`
+	Password           string                       `json:"password,omitempty"`
+	TimeoutSeconds     int                          `json:"timeout_seconds,omitempty"`
+	MaxRetries         int                          `json:"max_retries,omitempty"`
+	RetryDelayMS       int                          `json:"retry_delay_ms,omitempty"`
+	InputPrefix        string                       `json:"input_prefix,omitempty"`
+	Inputs             map[string]map[string]string `json:"inputs,omitempty"`
+	APIUsername        string                       `json:"api_username,omitempty"`
+	APIToken           string                       `json:"api_token,omitempty"`
+	AllowedCIDRs       []string                     `json:"allowed_cidrs,omitempty"`
+	AllowGETCommands   bool                         `json:"allow_get_commands,omitempty"`
+	RateLimitPerMinute int                          `json:"rate_limit_per_minute,omitempty"`
 }
 
 type TimeSlot struct {
@@ -206,6 +211,12 @@ func LoadConfig(file string) (Config, error) {
 	}
 	if strings.TrimSpace(cfg.Loxone.Direct.InputPrefix) == "" {
 		cfg.Loxone.Direct.InputPrefix = "RR"
+	}
+	if strings.TrimSpace(cfg.Loxone.Direct.APIUsername) == "" {
+		cfg.Loxone.Direct.APIUsername = "loxone"
+	}
+	if cfg.Loxone.Direct.RateLimitPerMinute <= 0 {
+		cfg.Loxone.Direct.RateLimitPerMinute = 30
 	}
 
 	if cfg.Roborock.ScheduleSignals.PublicHoliday == "" {

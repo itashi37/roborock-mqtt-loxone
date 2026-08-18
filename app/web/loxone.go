@@ -40,6 +40,8 @@ type LoxoneDependencies struct {
 	RefreshRoom       func(slug string)
 	DirectDiagnostics func() loxonedirect.SyncDiagnostics
 	ResendDirect      func()
+	SubmitCommand     func(slug, command string) roborock.CommandSubmission
+	FindCommand       func(id string) (slug string, activity roborock.LoxoneActivity, ok bool)
 	testMu            sync.RWMutex
 	lastMQTTTest      *LoxoneMQTTTestStatus
 }

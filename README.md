@@ -108,7 +108,12 @@ Create a `config.json` file:
       "timeout_seconds": 5,
       "max_retries": 3,
       "retry_delay_ms": 500,
-      "input_prefix": "RR"
+      "input_prefix": "RR",
+      "api_username": "loxone",
+      "api_token": "${LOXONE_BRIDGE_API_TOKEN}",
+      "allowed_cidrs": ["192.168.1.0/24"],
+      "allow_get_commands": false,
+      "rate_limit_per_minute": 30
     }
   },
   "web": {
@@ -138,6 +143,43 @@ with `loxone.direct.inputs`. Failed values are retried without blocking
 Roborock polling; `POST /api/loxone/direct/resend` queues a full resync. Dock
 service fields are intentionally not sent until their model capabilities and
 status values have been verified.
+
+### Direct Loxone command API
+
+Virtual Outputs should use HTTP `POST` with dedicated Basic authentication
+(`api_username` plus the random `api_token`). The token must contain at least
+32 characters. Bearer authentication is also accepted for non-Loxone clients;
+browser cookies are never accepted for this API. `allowed_cidrs` can restrict
+calls to the Miniserver LAN and commands are rate-limited per source and robot.
+Compatibility `GET` commands are disabled unless `allow_get_commands` is set
+explicitly.
+
+Canonical endpoint:
+
+```text
+POST /api/loxone/direct/v1/devices/{slug}/commands
+{"command":"clean_room_id:23"}
+```
+
+Virtual Output adapters:
+
+```text
+/commands/start
+/commands/pause
+/commands/dock
+/commands/locate
+/commands/rooms/{segment_id}
+/commands/scenes/{scene_id}
+/commands/fan/{mode}
+/commands/mop/{mode}
+/commands/water/{level}
+```
+
+All routes enter the same coordinator as MQTT and the Web UI. A successful
+submission returns HTTP `202` with its command ID. The latest correlated state
+is available from `GET /api/loxone/direct/v1/commands/{id}` using the same API
+authentication. Unsupported or unconfirmed capabilities are rejected rather
+than sent speculatively to the robot.
 
 ### Schedules
 

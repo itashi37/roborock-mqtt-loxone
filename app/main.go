@@ -238,6 +238,13 @@ func wireLoxoneWeb(restClient *roborock.Client) {
 				directSynchronizer.ResendAll()
 			}
 		},
+		SubmitCommand: func(slug, command string) roborock.CommandSubmission {
+			if commandCoordinator == nil {
+				return roborock.CommandSubmission{Command: command, State: "failed", Error: "command coordinator is not ready", Failure: "conflict"}
+			}
+			return commandCoordinator.SubmitText(slug, command)
+		},
+		FindCommand: loxoneDiagnostics.FindCommand,
 	})
 }
 

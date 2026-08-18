@@ -220,7 +220,7 @@ func ParseLoxoneCommand(payload string, roomNames map[string]string, scenes []Sc
 	argument = strings.TrimSpace(argument)
 
 	switch verb {
-	case "start", "pause", "dock":
+	case "start", "pause", "dock", "locate":
 		if hasArgument {
 			return LoxoneCommand{}, fmt.Errorf("%s does not accept an argument", verb)
 		}
@@ -319,6 +319,15 @@ func ParseLoxoneCommand(payload string, roomNames map[string]string, scenes []Sc
 			return LoxoneCommand{}, fmt.Errorf("unknown mop mode %q", argument)
 		}
 		return LoxoneCommand{Action: "set_mop_mode", Mode: mode}, nil
+	case "water":
+		if argument == "" {
+			return LoxoneCommand{}, fmt.Errorf("water requires a level")
+		}
+		level := strings.ToLower(argument)
+		if _, ok := waterBoxMap[level]; !ok {
+			return LoxoneCommand{}, fmt.Errorf("unknown water level %q", argument)
+		}
+		return LoxoneCommand{Action: "set_water_box", Level: level}, nil
 	default:
 		return LoxoneCommand{}, fmt.Errorf("unknown command %q", verb)
 	}

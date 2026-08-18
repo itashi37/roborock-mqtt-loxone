@@ -226,6 +226,24 @@ func (s *LoxoneDiagnosticStore) Snapshot(slug string) LoxoneDiagnostics {
 	return result
 }
 
+// FindCommand returns the newest lifecycle state recorded for a command ID.
+func (s *LoxoneDiagnosticStore) FindCommand(id string) (string, LoxoneActivity, bool) {
+	if s == nil || strings.TrimSpace(id) == "" {
+		return "", LoxoneActivity{}, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for slug, diagnostic := range s.devices {
+		for index := len(diagnostic.Recent) - 1; index >= 0; index-- {
+			activity := diagnostic.Recent[index]
+			if activity.Type == "command" && activity.ID == id {
+				return slug, activity, true
+			}
+		}
+	}
+	return "", LoxoneActivity{}, false
+}
+
 // RestoreLastCommand seeds diagnostics from the retained MQTT topic without
 // adding a duplicate entry to the current-session activity history.
 func (s *LoxoneDiagnosticStore) RestoreLastCommand(slug string, activity LoxoneActivity) {

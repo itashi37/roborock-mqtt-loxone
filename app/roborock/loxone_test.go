@@ -208,6 +208,7 @@ func TestParseLoxoneCommand(t *testing.T) {
 		{name: "start", payload: " start ", want: LoxoneCommand{Action: "start"}},
 		{name: "pause", payload: "pause", want: LoxoneCommand{Action: "pause"}},
 		{name: "dock", payload: "dock", want: LoxoneCommand{Action: "dock"}},
+		{name: "locate", payload: "locate", want: LoxoneCommand{Action: "locate"}},
 		{name: "room by name case insensitive", payload: "clean_room:cuisine", want: LoxoneCommand{Action: "segment_clean", Segments: []int{23}}},
 		{name: "rooms by name", payload: "clean_rooms: Cuisine, Salon, Cuisine ", want: LoxoneCommand{Action: "segment_clean", Segments: []int{23, 12}}},
 		{name: "room by id", payload: "clean_room_id:23", want: LoxoneCommand{Action: "segment_clean", Segments: []int{23}}},
@@ -217,6 +218,7 @@ func TestParseLoxoneCommand(t *testing.T) {
 		{name: "scene by id", payload: "scene_id:101", want: LoxoneCommand{Action: "scene", SceneID: 101}},
 		{name: "fan", payload: "fan:Turbo", want: LoxoneCommand{Action: "set_fan_speed", Speed: "turbo"}},
 		{name: "mop", payload: "mop:Deep", want: LoxoneCommand{Action: "set_mop_mode", Mode: "deep"}},
+		{name: "water", payload: "water:Moderate", want: LoxoneCommand{Action: "set_water_box", Level: "moderate"}},
 	}
 
 	for _, tt := range tests {

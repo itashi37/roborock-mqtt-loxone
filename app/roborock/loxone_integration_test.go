@@ -89,3 +89,14 @@ func TestLoxoneDiagnosticStoreIsBounded(t *testing.T) {
 		t.Fatal("restoring retained command changed current-session history")
 	}
 }
+
+func TestLoxoneDiagnosticStoreFindsLatestCommandState(t *testing.T) {
+	store := NewLoxoneDiagnosticStore(10)
+	empty := ""
+	store.Record("vacuum", LoxoneActivity{Type: "command", ID: "cmd-1", State: "accepted", Error: &empty})
+	store.Record("vacuum", LoxoneActivity{Type: "command", ID: "cmd-1", State: "running", Error: &empty})
+	slug, activity, ok := store.FindCommand("cmd-1")
+	if !ok || slug != "vacuum" || activity.State != "running" {
+		t.Fatalf("unexpected lookup: slug=%q activity=%+v ok=%v", slug, activity, ok)
+	}
+}

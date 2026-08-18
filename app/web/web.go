@@ -41,6 +41,7 @@ type WebServer struct {
 	// only once this exceeds the grace window, so transient blips don't restart.
 	unhealthySince *time.Time
 	unhealthyMu    sync.Mutex
+	directLimiter  directCommandLimiter
 }
 
 // livenessGrace returns the configured grace window before liveness fails,
@@ -63,6 +64,7 @@ func NewWebServer(
 		onAuth:        onAuth,
 		router:        chi.NewRouter(),
 		sseClients:    make(map[string]*SSEClient),
+		directLimiter: directCommandLimiter{windows: make(map[string]directRateWindow)},
 	}
 
 	ws.setupRoutes()
@@ -156,6 +158,16 @@ func (ws *WebServer) setupRoutes() {
 			r.Post("/devices/{slug}/command", ws.loxoneCommandTest)
 			r.Post("/mqtt-test", ws.loxoneMQTTTest)
 			r.Post("/direct/resend", ws.loxoneDirectResend)
+			r.Post("/direct/v1/devices/{slug}/commands", ws.directAPI(ws.loxoneDirectCanonicalCommand))
+			r.Get("/direct/v1/commands/{id}", ws.directAPI(ws.loxoneDirectCommandStatus))
+			for _, method := range []string{http.MethodPost, http.MethodGet} {
+				r.MethodFunc(method, "/direct/v1/devices/{slug}/commands/{action}", ws.directAPI(ws.loxoneDirectSimpleCommand))
+				r.MethodFunc(method, "/direct/v1/devices/{slug}/commands/rooms/{value}", ws.directAPI(ws.loxoneDirectPathCommand("room")))
+				r.MethodFunc(method, "/direct/v1/devices/{slug}/commands/scenes/{value}", ws.directAPI(ws.loxoneDirectPathCommand("scene")))
+				r.MethodFunc(method, "/direct/v1/devices/{slug}/commands/fan/{value}", ws.directAPI(ws.loxoneDirectPathCommand("fan")))
+				r.MethodFunc(method, "/direct/v1/devices/{slug}/commands/mop/{value}", ws.directAPI(ws.loxoneDirectPathCommand("mop")))
+				r.MethodFunc(method, "/direct/v1/devices/{slug}/commands/water/{value}", ws.directAPI(ws.loxoneDirectPathCommand("water")))
+			}
 			r.Post("/export", ws.loxoneExport)
 		})
 	})
