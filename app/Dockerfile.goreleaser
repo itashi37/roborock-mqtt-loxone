@@ -2,9 +2,9 @@ FROM gcr.io/distroless/static:nonroot
 
 WORKDIR /
 
-COPY roborock-mqtt /roborock-mqtt
+COPY roborock-mqtt-loxone /roborock-mqtt-loxone
 COPY web/dist /web/dist
 
 USER nonroot:nonroot
 
-ENTRYPOINT ["/roborock-mqtt", "/var/lib/roborock-mqtt/config.json"]
+ENTRYPOINT ["/roborock-mqtt-loxone", "/var/lib/roborock-mqtt-loxone/config.json"]

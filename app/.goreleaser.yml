@@ -1,4 +1,4 @@
-project_name: roborock-mqtt
+project_name: roborock-mqtt-loxone
 version: 2
 
 before:
@@ -7,9 +7,9 @@ before:
     - sh -c "cd web && npm install -g pnpm@11.5.1 && pnpm install --frozen-lockfile && pnpm run build"
 
 builds:
-  - id: roborock-mqtt
+  - id: roborock-mqtt-loxone
     main: ./main.go
-    binary: roborock-mqtt
+    binary: roborock-mqtt-loxone
     goos:
       - linux
     goarch:
@@ -22,7 +22,7 @@ builds:
 
 dockers:
   - image_templates:
-      - "pharndt/roborock-mqtt:{{ .Tag }}-amd64"
+      - "itashi37/roborock-mqtt-loxone:{{ .Tag }}-amd64"
     dockerfile: Dockerfile.goreleaser
     use: buildx
     goos: linux
@@ -34,7 +34,7 @@ dockers:
     skip_push: false
 
   - image_templates:
-      - "pharndt/roborock-mqtt:{{ .Tag }}-arm64"
+      - "itashi37/roborock-mqtt-loxone:{{ .Tag }}-arm64"
     dockerfile: Dockerfile.goreleaser
     use: buildx
     goos: linux
@@ -47,16 +47,16 @@ dockers:
 
 docker_manifests:
   - id: tag
-    name_template: "pharndt/roborock-mqtt:{{ .Tag }}"
+    name_template: "itashi37/roborock-mqtt-loxone:{{ .Tag }}"
     image_templates:
-      - pharndt/roborock-mqtt:{{ .Tag }}-amd64
-      - pharndt/roborock-mqtt:{{ .Tag }}-arm64
+      - itashi37/roborock-mqtt-loxone:{{ .Tag }}-amd64
+      - itashi37/roborock-mqtt-loxone:{{ .Tag }}-arm64
 
   - id: latest
-    name_template: "pharndt/roborock-mqtt:latest"
+    name_template: "itashi37/roborock-mqtt-loxone:latest"
     image_templates:
-      - pharndt/roborock-mqtt:{{ .Tag }}-amd64
-      - pharndt/roborock-mqtt:{{ .Tag }}-arm64
+      - itashi37/roborock-mqtt-loxone:{{ .Tag }}-amd64
+      - itashi37/roborock-mqtt-loxone:{{ .Tag }}-arm64
 
 release:
   disable: false

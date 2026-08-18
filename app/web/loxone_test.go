@@ -1,0 +1,183 @@
+package web
+
+import (
+	"archive/zip"
+	"bytes"
+	"encoding/csv"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+
+	appconfig "github.com/mqtt-home/roborock-mqtt/config"
+	"github.com/mqtt-home/roborock-mqtt/roborock"
+)
+
+func TestCreateLoxoneExportZIPContainsSafeDocumentedPack(t *testing.T) {
+	pack := loxoneExportPack{
+		Schema:                "roborock-mqtt-loxone-integration/v1",
+		Project:               "roborock-mqtt-loxone",
+		Upstream:              "https://github.com/mqtt-home/roborock-mqtt",
+		GeneratedAt:           "2026-08-18T10:00:00Z",
+		LoxoneTopic:           "loxone/roborock",
+		SubscriptionsPerRobot: 2,
+		SubscriptionsRequired: 18,
+		SubscriptionLimit:     16,
+		ExceedsLimit:          true,
+		Warning:               "WARNING: 18 exceeds 16",
+		Robots: []loxoneExportRobot{{
+			Slug: "vacuum",
+			Name: "=Formula Robot",
+			Topics: loxoneTopics{
+				Core: "loxone/roborock/vacuum/core", Activity: "loxone/roborock/vacuum/activity", Command: "loxone/roborock/vacuum/command",
+			},
+			Rooms:  []loxoneRoomResponse{{ID: 23, EffectiveName: "Cuisine", Command: "clean_room_id:23"}},
+			Scenes: []loxoneSceneResponse{{ID: 101, Name: "Dinner", Command: "scene_id:101"}},
+		}},
+	}
+	data, err := createLoxoneExportZIP(pack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := make(map[string]string)
+	for _, file := range reader.File {
+		stream, err := file.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		content, err := io.ReadAll(stream)
+		_ = stream.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[file.Name] = string(content)
+	}
+	for _, name := range []string{"integration.json", "topics.csv", "command-recognition.csv", "SETUP.md"} {
+		if _, ok := files[name]; !ok {
+			t.Fatalf("missing %s", name)
+		}
+	}
+	if !strings.Contains(files["SETUP.md"], "18 subscriptions") || !strings.Contains(files["SETUP.md"], "not a native Loxone XML") {
+		t.Fatalf("setup lacks warning/safety explanation: %s", files["SETUP.md"])
+	}
+	records, err := csv.NewReader(strings.NewReader(files["topics.csv"])).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) < 2 || records[1][0] != "'=Formula Robot" {
+		t.Fatalf("CSV formula prefix was not neutralized: %+v", records)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(files["integration.json"]), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	serialized := files["integration.json"]
+	for _, forbidden := range []string{"password", "username", "localKey", "token", "mqtt_url"} {
+		if strings.Contains(serialized, forbidden) {
+			t.Fatalf("export unexpectedly contains secret field %q", forbidden)
+		}
+	}
+}
+
+func TestSafeCSV(t *testing.T) {
+	for _, value := range []string{"=1+1", "+cmd", "-2", "@formula"} {
+		if got := safeCSV(value); !strings.HasPrefix(got, "'") {
+			t.Fatalf("safeCSV(%q) = %q", value, got)
+		}
+	}
+	if got := safeCSV("Cuisine"); got != "Cuisine" {
+		t.Fatalf("safe name changed to %q", got)
+	}
+}
+
+func TestLoxoneCommandEndpointUsesInjectedPublisher(t *testing.T) {
+	loadLoxoneTestConfig(t)
+	manager := roborock.NewDeviceManager(&roborock.LoginData{}, []roborock.DeviceInfo{{Name: "Vacuum"}}, nil, t.TempDir())
+	server := NewWebServer(manager, &roborock.Client{}, nil)
+	var gotSlug, gotCommand string
+	server.SetLoxoneIntegration(&LoxoneDependencies{PublishCommand: func(slug, command string) error {
+		gotSlug, gotCommand = slug, command
+		return nil
+	}})
+
+	request := httptest.NewRequest(http.MethodPost, "/api/loxone/devices/vacuum/command", strings.NewReader(`{"command":"dock"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.router.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("got status %d: %s", response.Code, response.Body.String())
+	}
+	if gotSlug != "vacuum" || gotCommand != "dock" {
+		t.Fatalf("publisher got slug=%q command=%q", gotSlug, gotCommand)
+	}
+}
+
+func TestLoxoneExportBeyondLimitWarnsButSucceeds(t *testing.T) {
+	loadLoxoneTestConfig(t)
+	devices := make([]roborock.DeviceInfo, 0, 9)
+	for i := 1; i <= 9; i++ {
+		devices = append(devices, roborock.DeviceInfo{Name: "Robot " + strconv.Itoa(i)})
+	}
+	manager := roborock.NewDeviceManager(&roborock.LoginData{}, devices, nil, t.TempDir())
+	server := NewWebServer(manager, &roborock.Client{}, nil)
+	server.SetLoxoneIntegration(&LoxoneDependencies{Core: roborock.NewLoxoneCoreStore(), Diagnostics: roborock.NewLoxoneDiagnosticStore(10)})
+	request := httptest.NewRequest(http.MethodPost, "/api/loxone/export", strings.NewReader(`{"robots":[]}`))
+	response := httptest.NewRecorder()
+	server.router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("export was blocked with status %d: %s", response.Code, response.Body.String())
+	}
+	reader, err := zip.NewReader(bytes.NewReader(response.Body.Bytes()), int64(response.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var integration []byte
+	for _, file := range reader.File {
+		if file.Name != "integration.json" {
+			continue
+		}
+		stream, err := file.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		integration, err = io.ReadAll(stream)
+		_ = stream.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var pack loxoneExportPack
+	if err := json.Unmarshal(integration, &pack); err != nil {
+		t.Fatal(err)
+	}
+	if !pack.ExceedsLimit || pack.SubscriptionsRequired != 18 || pack.Warning == "" {
+		t.Fatalf("missing over-limit warning: %+v", pack)
+	}
+}
+
+func loadLoxoneTestConfig(t *testing.T) {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "config.json")
+	data := []byte(`{
+		"mqtt":{"url":"tcp://localhost:1883","topic":"home/roborock"},
+		"roborock":{"username":"test@example.com"},
+		"loxone":{"enabled":true,"topic":"loxone/roborock"},
+		"web":{"enabled":true}
+	}`)
+	if err := os.WriteFile(file, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := appconfig.LoadConfig(file); err != nil {
+		t.Fatal(err)
+	}
+}

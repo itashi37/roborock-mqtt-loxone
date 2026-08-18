@@ -126,7 +126,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         </div>
 
         <div className="mt-6 text-center text-xs text-muted-foreground">
-          roborock-mqtt
+          roborock-mqtt-loxone
         </div>
       </div>
     </div>

@@ -28,6 +28,12 @@
       "vacation": "rules/free-day"
     }
   },
+  "loxone": {
+    "enabled": false,
+    "topic": "loxone/roborock",
+    "command_debounce_ms": 2000,
+    "command_timeout_seconds": 90
+  },
   "web": {
     "enabled": true,
     "port": 8080

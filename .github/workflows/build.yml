@@ -1,4 +1,4 @@
-name: Application
+name: roborock-mqtt-loxone
 
 on:
   push:
@@ -32,4 +32,4 @@ jobs:
           platforms: linux/amd64
           push: false
           tags: |
-            pharndt/roborock-mqtt:latest
+            itashi37/roborock-mqtt-loxone:latest

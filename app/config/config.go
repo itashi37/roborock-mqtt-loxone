@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"strings"
 
 	"github.com/philipparndt/go-logger"
 	"github.com/philipparndt/mqtt-gateway/config"
@@ -13,9 +14,17 @@ var cfg Config
 type Config struct {
 	MQTT          config.MQTTConfig  `json:"mqtt"`
 	Roborock      RoborockConfig     `json:"roborock"`
+	Loxone        LoxoneConfig       `json:"loxone,omitempty"`
 	Web           WebConfig          `json:"web"`
 	Notifications NotificationConfig `json:"notifications,omitempty"`
 	LogLevel      string             `json:"loglevel,omitempty"`
+}
+
+type LoxoneConfig struct {
+	Enabled               bool   `json:"enabled"`
+	Topic                 string `json:"topic,omitempty"`
+	CommandDebounceMS     int    `json:"command_debounce_ms,omitempty"`
+	CommandTimeoutSeconds int    `json:"command_timeout_seconds,omitempty"`
 }
 
 type TimeSlot struct {
@@ -60,10 +69,10 @@ type ThresholdConfig struct {
 }
 
 type NotificationConfig struct {
-	Email                       EmailConfig        `json:"email,omitempty"`
-	Thresholds                  ThresholdConfig     `json:"thresholds,omitempty"`
-	ConsumableLifetimes         ConsumableLifetimes `json:"consumable_lifetimes,omitempty"`
-	DisableScheduleOnMaintenance *bool              `json:"disable_schedule_on_maintenance,omitempty"`
+	Email                        EmailConfig         `json:"email,omitempty"`
+	Thresholds                   ThresholdConfig     `json:"thresholds,omitempty"`
+	ConsumableLifetimes          ConsumableLifetimes `json:"consumable_lifetimes,omitempty"`
+	DisableScheduleOnMaintenance *bool               `json:"disable_schedule_on_maintenance,omitempty"`
 }
 
 // ShouldDisableScheduleOnMaintenance returns whether schedules should be paused
@@ -76,14 +85,14 @@ func (n NotificationConfig) ShouldDisableScheduleOnMaintenance() bool {
 }
 
 type RoborockConfig struct {
-	Username        string                                `json:"username"`
-	Password        string                                `json:"password"`
-	ClientID        string                                `json:"client_id"`
-	BaseURL         string                                `json:"base_url"`
-	PollingInterval int                                    `json:"polling_interval"`
-	Schedules       map[string]DeviceSchedule              `json:"schedules,omitempty"`
-	ScheduleSignals ScheduleSignals                        `json:"schedule_signals,omitempty"`
-	RoomNames       map[string]map[string]string            `json:"room_names,omitempty"`
+	Username        string                       `json:"username"`
+	Password        string                       `json:"password"`
+	ClientID        string                       `json:"client_id"`
+	BaseURL         string                       `json:"base_url"`
+	PollingInterval int                          `json:"polling_interval"`
+	Schedules       map[string]DeviceSchedule    `json:"schedules,omitempty"`
+	ScheduleSignals ScheduleSignals              `json:"schedule_signals,omitempty"`
+	RoomNames       map[string]map[string]string `json:"room_names,omitempty"`
 }
 
 type WebConfig struct {
@@ -124,6 +133,17 @@ func LoadConfig(file string) (Config, error) {
 
 	if cfg.Web.Port == 0 {
 		cfg.Web.Port = 8080
+	}
+
+	cfg.Loxone.Topic = strings.TrimSuffix(strings.TrimSpace(cfg.Loxone.Topic), "/")
+	if cfg.Loxone.Topic == "" {
+		cfg.Loxone.Topic = "loxone/roborock"
+	}
+	if cfg.Loxone.CommandDebounceMS <= 0 {
+		cfg.Loxone.CommandDebounceMS = 2000
+	}
+	if cfg.Loxone.CommandTimeoutSeconds <= 0 {
+		cfg.Loxone.CommandTimeoutSeconds = 90
 	}
 
 	if cfg.Roborock.ScheduleSignals.PublicHoliday == "" {

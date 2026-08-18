@@ -26,16 +26,16 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o roborock-mqtt .
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o roborock-mqtt-loxone .
 
 # Final stage
 FROM gcr.io/distroless/static:nonroot
 
 WORKDIR /
 
-COPY --from=backend-builder /app/roborock-mqtt /roborock-mqtt
+COPY --from=backend-builder /app/roborock-mqtt-loxone /roborock-mqtt-loxone
 COPY --from=frontend-builder /app/web/dist /web/dist
 
 USER nonroot:nonroot
 
-ENTRYPOINT ["/roborock-mqtt", "/var/lib/roborock-mqtt/config.json"]
+ENTRYPOINT ["/roborock-mqtt-loxone", "/var/lib/roborock-mqtt-loxone/config.json"]

@@ -10,8 +10,8 @@ BUILD_DIR = build
 CONFIG_DIR = $(PWD)/../production/config
 WEB_DIR = web
 
-BINARY_NAME = roborock-mqtt
-DOCKER_IMAGE_NAME = pharndt/roborock-mqtt:latest
+BINARY_NAME = roborock-mqtt-loxone
+DOCKER_IMAGE_NAME ?= roborock-mqtt-loxone:local
 
 .PHONY: build
 build: build-frontend build-backend

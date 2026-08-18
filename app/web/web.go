@@ -30,6 +30,8 @@ type WebServer struct {
 	scheduleEngine *roborock.ScheduleEngine
 	notAtHomeStore *roborock.NotAtHomeStore
 	scheduleStore  *roborock.ScheduleStore
+	loxone         *LoxoneDependencies
+	loxoneMu       sync.RWMutex
 	onAuth         func()
 	router         *chi.Mux
 	sseClients     map[string]*SSEClient
@@ -87,6 +89,20 @@ func (ws *WebServer) SetScheduleStore(store *roborock.ScheduleStore) {
 	ws.scheduleStore = store
 }
 
+// SetLoxoneIntegration wires the optional Loxone UI to the already-running
+// bridge without making the web package own the MQTT client.
+func (ws *WebServer) SetLoxoneIntegration(dependencies *LoxoneDependencies) {
+	ws.loxoneMu.Lock()
+	defer ws.loxoneMu.Unlock()
+	ws.loxone = dependencies
+}
+
+func (ws *WebServer) getLoxoneIntegration() *LoxoneDependencies {
+	ws.loxoneMu.RLock()
+	defer ws.loxoneMu.RUnlock()
+	return ws.loxone
+}
+
 func (ws *WebServer) setupRoutes() {
 	ws.router.Use(loggerchi.LoggerWithLevel(slog.LevelDebug))
 	ws.router.Use(middleware.Recoverer)
@@ -132,6 +148,15 @@ func (ws *WebServer) setupRoutes() {
 		r.Get("/schedule/status", ws.scheduleStatus)
 		r.Put("/not-at-home", ws.notAtHome)
 		r.Get("/events", ws.handleSSE)
+
+		r.Route("/loxone", func(r chi.Router) {
+			r.Get("/integration", ws.loxoneIntegration)
+			r.Put("/devices/{slug}/rooms/{id}", ws.loxoneRoomOverrideSave)
+			r.Delete("/devices/{slug}/rooms/{id}", ws.loxoneRoomOverrideDelete)
+			r.Post("/devices/{slug}/command", ws.loxoneCommandTest)
+			r.Post("/mqtt-test", ws.loxoneMQTTTest)
+			r.Post("/export", ws.loxoneExport)
+		})
 	})
 
 	// SPA fallback: serve static files, fall back to index.html for client-side routes
@@ -557,8 +582,8 @@ func (ws *WebServer) resetConsumable(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"status":             "success",
-		"consumables":        consumables,
+		"status":              "success",
+		"consumables":         consumables,
 		"consumable_percents": percents,
 	})
 }
@@ -703,8 +728,8 @@ func (ws *WebServer) notAtHome(w http.ResponseWriter, r *http.Request) {
 // BroadcastScheduleState sends a schedule state update to all SSE clients.
 func (ws *WebServer) BroadcastScheduleState(slug string, state *roborock.ScheduleState) {
 	payload := struct {
-		Type   string                `json:"type"`
-		Device string                `json:"device"`
+		Type   string                  `json:"type"`
+		Device string                  `json:"device"`
 		State  *roborock.ScheduleState `json:"state"`
 	}{
 		Type:   "schedule",
@@ -781,6 +806,31 @@ func (ws *WebServer) BroadcastDeviceAvailability(slug string, online bool) {
 		}
 	}
 	ws.sseClientsMu.RUnlock()
+}
+
+// BroadcastLoxoneActivity forwards the Phase 2 stream to the diagnostic page.
+func (ws *WebServer) BroadcastLoxoneActivity(slug string, activity roborock.LoxoneActivity) {
+	payload := struct {
+		Type     string                  `json:"type"`
+		Device   string                  `json:"device"`
+		Activity roborock.LoxoneActivity `json:"activity"`
+	}{Type: "loxone_activity", Device: slug, Activity: activity}
+	message, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	ws.broadcastSSE(string(message))
+}
+
+func (ws *WebServer) broadcastSSE(message string) {
+	ws.sseClientsMu.RLock()
+	defer ws.sseClientsMu.RUnlock()
+	for _, client := range ws.sseClients {
+		select {
+		case client.Channel <- message:
+		default:
+		}
+	}
 }
 
 func (ws *WebServer) handleSSE(w http.ResponseWriter, r *http.Request) {

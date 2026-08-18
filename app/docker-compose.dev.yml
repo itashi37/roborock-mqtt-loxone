@@ -1,12 +1,12 @@
 services:
-  roborock-mqtt:
+  roborock-mqtt-loxone:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: roborock-mqtt
+    container_name: roborock-mqtt-loxone
     restart: unless-stopped
     volumes:
-      - ../production/config/config.json:/var/lib/roborock-mqtt/config.json:ro
+      - ../production/config/config.json:/var/lib/roborock-mqtt-loxone/config.json:ro
     ports:
       - "8080:8080"
     environment:

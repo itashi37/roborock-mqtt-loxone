@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Routes, Route, Navigate, useParams, useNavigate, Link } from 'react-router-dom';
-import { Battery, Sun, Moon, Wifi, WifiOff, Play, Pause, Home, Wind, Droplets, AlertCircle, Clock, MapPin, LogOut, ChevronRight, Wrench } from 'lucide-react';
+import { Battery, Sun, Moon, Wifi, WifiOff, Play, Pause, Home, Wind, Droplets, AlertCircle, Clock, MapPin, LogOut, ChevronRight, Wrench, Network } from 'lucide-react';
 import { useSSE } from '@/hooks/useSSE';
 import { pauseCleaning, dockVacuum, getAuthStatus, logout, fetchDevices, fetchScenes, executeScene, setNotAtHome } from '@/lib/api';
 import type { SceneInfo } from '@/lib/api';
@@ -16,6 +16,7 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { ControlsPage } from '@/components/ControlsPage';
 import { MaintenancePage } from '@/components/MaintenancePage';
 import { SchedulePage } from '@/components/SchedulePage';
+import { LoxoneIntegrationPage } from '@/components/LoxoneIntegrationPage';
 
 const activeCleaningStates = new Set([
   'cleaning', 'spot_cleaning', 'segment_cleaning', 'zoned_cleaning',
@@ -26,7 +27,7 @@ const activeCleaningStates = new Set([
 export function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [devices, setDevices] = useState<DeviceSummary[]>([]);
-  const { statuses, scheduleStates, availabilities, isConnected, error, reconnect } = useSSE();
+  const { statuses, scheduleStates, availabilities, loxoneActivities, isConnected, error, reconnect } = useSSE();
   const { theme, toggleTheme } = useTheme();
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [scenesBySlug, setScenesBySlug] = useState<Record<string, SceneInfo[]>>({});
@@ -98,6 +99,7 @@ export function App() {
   return (
     <>
       <Routes>
+        <Route path="/loxone" element={<LoxoneIntegrationPage liveActivities={loxoneActivities} />} />
         <Route path="/devices/:slug/*" element={
           <DeviceLayout
             devices={liveDevices}
@@ -243,7 +245,7 @@ function DeviceLayout({ devices, statuses, globalNotAtHome, setGlobalNotAtHome, 
 
         <Outlet />
 
-        <div className="mt-8 text-center text-xs text-muted-foreground">roborock-mqtt</div>
+        <div className="mt-8 text-center text-xs text-muted-foreground">roborock-mqtt-loxone</div>
       </div>
     </div>
   );
@@ -418,6 +420,17 @@ function DeviceHome({ devices, statuses, scheduleStates, scenesBySlug, activeSce
         scenes={scenes}
         sseScheduleState={scheduleStates[slug]}
       />
+
+      {/* Loxone integration */}
+      <div className="mb-6">
+        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-3">Integration</h2>
+        <Link to="/loxone" className="block w-full p-4 bg-card rounded-lg border border-border hover:bg-accent transition-colors text-left">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 text-sm"><Network className="h-4 w-4 text-primary" /><span>Loxone Integration</span></div>
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          </div>
+        </Link>
+      </div>
 
       {/* Map */}
       <VectorMap slug={slug} isCleaning={status?.in_cleaning ?? false} />

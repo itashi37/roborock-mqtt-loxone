@@ -1,0 +1,89 @@
+export interface LoxoneCore {
+  online: number;
+  state: string;
+  battery: number;
+  current_room_id: number;
+  current_room_name: string;
+  error_code: number;
+  last_seen: number;
+}
+
+export interface LoxoneActivity {
+  type: 'command' | 'event';
+  ts: number;
+  id?: string;
+  command?: string;
+  state?: string;
+  error?: string;
+  event?: string;
+  room_id?: number;
+  room_name?: string;
+  error_code?: number;
+  error_text?: string;
+}
+
+export interface LoxoneDiagnostics {
+  last_activity?: LoxoneActivity;
+  last_command?: LoxoneActivity;
+  recent?: LoxoneActivity[];
+}
+
+export interface LoxoneRoom {
+  id: number;
+  roborock_name: string;
+  config_name?: string;
+  override_name?: string;
+  effective_name: string;
+  conflict: boolean;
+  command: string;
+}
+
+export interface LoxoneScene {
+  id: number;
+  name: string;
+  command: string;
+}
+
+export interface LoxoneRobot {
+  slug: string;
+  name: string;
+  model: string;
+  online: boolean;
+  core: LoxoneCore;
+  topics: {
+    core: string;
+    activity: string;
+    command: string;
+    last_command: string;
+  };
+  rooms: LoxoneRoom[];
+  scenes: LoxoneScene[];
+  diagnostics: LoxoneDiagnostics;
+}
+
+export interface LoxoneMQTTTest {
+  ok: boolean;
+  message: string;
+  tested_at: number;
+}
+
+export interface LoxoneIntegration {
+  project: string;
+  upstream: string;
+  enabled: boolean;
+  bridge_started: boolean;
+  topic: string;
+  subscription_limit: number;
+  subscriptions_per_robot: number;
+  subscriptions_required: number;
+  exceeds_limit: boolean;
+  warning?: string;
+  mqtt_test?: LoxoneMQTTTest;
+  robots: LoxoneRobot[];
+}
+
+export interface LoxoneExportSelection {
+  slug: string;
+  room_ids: number[];
+  scene_ids: number[];
+}

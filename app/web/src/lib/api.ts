@@ -1,4 +1,5 @@
 import type { DeviceSummary } from '@/types/status';
+import type { LoxoneExportSelection, LoxoneIntegration, LoxoneMQTTTest, LoxoneRoom } from '@/types/loxone';
 
 export const API_BASE = import.meta.env.DEV ? 'http://localhost:8080/api' : '/api';
 
@@ -145,4 +146,70 @@ export async function setNotAtHome(enabled: boolean): Promise<any> {
   });
   if (!response.ok) throw new Error('Failed to update not-at-home');
   return response.json();
+}
+
+// --- Loxone integration ---
+
+export async function fetchLoxoneIntegration(): Promise<LoxoneIntegration> {
+  const response = await fetch(`${API_BASE}/loxone/integration`);
+  if (!response.ok) throw new Error('Failed to load Loxone integration');
+  return response.json();
+}
+
+export async function saveLoxoneRoomOverride(slug: string, roomId: number, name: string): Promise<LoxoneRoom[]> {
+  const response = await fetch(`${API_BASE}/loxone/devices/${slug}/rooms/${roomId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Failed to save room name');
+  return data.rooms;
+}
+
+export async function deleteLoxoneRoomOverride(slug: string, roomId: number): Promise<LoxoneRoom[]> {
+  const response = await fetch(`${API_BASE}/loxone/devices/${slug}/rooms/${roomId}`, { method: 'DELETE' });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Failed to delete room override');
+  return data.rooms;
+}
+
+export async function testLoxoneCommand(slug: string, command: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/loxone/devices/${slug}/command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Failed to publish command');
+}
+
+export async function testLoxoneMQTT(): Promise<LoxoneMQTTTest> {
+  const response = await fetch(`${API_BASE}/loxone/mqtt-test`, { method: 'POST' });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || data.error || 'MQTT test failed');
+  return data;
+}
+
+export async function downloadLoxoneIntegration(robots: LoxoneExportSelection[]): Promise<void> {
+  const response = await fetch(`${API_BASE}/loxone/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ robots }),
+  });
+  if (!response.ok) {
+    const data = await response.json();
+    throw new Error(data.error || 'Failed to generate integration pack');
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get('Content-Disposition') ?? '';
+  const filename = disposition.match(/filename="([^"]+)"/)?.[1] ?? 'roborock-mqtt-loxone-integration.zip';
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
