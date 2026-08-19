@@ -238,8 +238,7 @@ func (m *Monitor) Step(now time.Time) Report {
 	report := Assess(observation, m.cfg)
 	needsRecovery := !report.Live || (observation.BridgeStarted && !observation.CloudConnected) ||
 		(observation.LocalMQTTEnabled && !observation.LocalMQTTConnected) ||
-		(observation.DirectEnabled && (observation.DirectPending > m.cfg.MaxQueueDepth || observation.DirectLastError != "")) ||
-		contains(report.Reasons, "cloud") || contains(report.Reasons, "robot_updates") || contains(report.Reasons, "direct_loxone")
+		contains(report.Reasons, "cloud") || contains(report.Reasons, "robot_updates")
 
 	m.mu.Lock()
 	defer m.mu.Unlock()

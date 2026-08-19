@@ -72,6 +72,46 @@ func TestMonitorUsesProgressiveRecoveryAndOnlyRestartsFatalHealth(t *testing.T) 
 	}
 }
 
+func TestDirectLoxoneConfigurationErrorDoesNotReconnectRoborock(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	observation := Observation{
+		StartedAt:              now.Add(-time.Hour),
+		Authenticated:          true,
+		BridgeStarted:          true,
+		RoborockLoopLastActive: now,
+		CloudConnected:         true,
+		LastCloudMessage:       now,
+		LastRobotUpdate:        now,
+		DirectEnabled:          true,
+		DirectLastSuccess:      now,
+		DirectLastError:        "Loxone HTTP status 404",
+	}
+	actions := []string{}
+	monitor := NewMonitor(Config{
+		Enabled: true, StaleAfter: time.Hour, ReconnectAfter: time.Second,
+		RebuildAfter: 2 * time.Second, ResetAfter: 3 * time.Second,
+		RestartAfter: 4 * time.Second, MaxQueueDepth: 2,
+	}, func(at time.Time) Observation {
+		observation.ObservedAt = at
+		return observation
+	}, Actions{
+		Reconnect: func(string) { actions = append(actions, "reconnect") },
+		Rebuild:   func(string) { actions = append(actions, "rebuild") },
+		Reset:     func(string) { actions = append(actions, "reset") },
+		Exit:      func(string) { actions = append(actions, "restart") },
+	}, nil)
+
+	for second := 0; second <= 6; second++ {
+		report := monitor.Step(now.Add(time.Duration(second) * time.Second))
+		if report.Status != "degraded" || report.Ready {
+			t.Fatalf("Direct error must remain visible as degraded readiness: %+v", report)
+		}
+	}
+	if len(actions) != 0 {
+		t.Fatalf("Direct configuration error triggered Roborock recovery: %v", actions)
+	}
+}
+
 func TestRestartGuardPreventsRestartLoop(t *testing.T) {
 	guard := NewRestartGuard(t.TempDir())
 	now := time.Unix(1700000000, 0)
