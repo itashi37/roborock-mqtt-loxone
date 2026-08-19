@@ -17,6 +17,12 @@ RUN pnpm run build
 # Build stage for backend
 FROM golang:1.26-alpine AS backend-builder
 
+ARG TARGETOS=linux
+ARG TARGETARCH
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
+
 WORKDIR /app
 
 RUN apk add --no-cache git
@@ -26,7 +32,9 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o roborock-mqtt-loxone .
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -a -installsuffix cgo \
+    -ldflags "-s -w -X github.com/mqtt-home/roborock-mqtt/version.Version=${VERSION} -X github.com/mqtt-home/roborock-mqtt/version.GitCommit=${GIT_COMMIT} -X github.com/mqtt-home/roborock-mqtt/version.BuildTime=${BUILD_TIME}" \
+    -o roborock-mqtt-loxone .
 
 # Final stage
 FROM gcr.io/distroless/static:nonroot

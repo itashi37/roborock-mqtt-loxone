@@ -31,6 +31,18 @@ additive Loxone contract. Existing upstream MQTT topics remain available.
 A fresh Docker named volume is created automatically. The container creates a
 minimal `config.json`, then the browser wizard stores the integration settings.
 
+Official multiarchitecture images are published at
+`ghcr.io/itashi37/roborock-mqtt-loxone`. Use `:latest` for stable releases or
+`:edge` for builds from `main`:
+
+```bash
+docker pull ghcr.io/itashi37/roborock-mqtt-loxone:latest
+```
+
+Stable SemVer releases also publish immutable `:v1.2.3`, minor `:1.2`, and
+major `:1` aliases. Every manifest contains both `linux/amd64` and
+`linux/arm64`; `:edge` is never promoted to `:latest`.
+
 ```bash
 git clone https://github.com/itashi37/roborock-mqtt-loxone.git
 cd roborock-mqtt-loxone
