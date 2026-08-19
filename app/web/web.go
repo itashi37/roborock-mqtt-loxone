@@ -124,6 +124,8 @@ func (ws *WebServer) setupRoutes() {
 		r.Get("/ready", ws.readiness)
 		r.Get("/system/status", ws.systemStatus)
 		r.Post("/system/updates/check", ws.systemCheckUpdates)
+		r.Get("/system/updates/operation", ws.systemUpdateOperation)
+		r.Post("/system/updates/install", ws.systemInstallUpdate)
 		r.Get("/fleet/health", ws.fleetHealth)
 		r.Get("/loxone/templates/status", ws.loxoneTemplateStatus)
 		r.Get("/setup/status", ws.setupStatus)

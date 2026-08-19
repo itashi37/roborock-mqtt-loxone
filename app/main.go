@@ -25,6 +25,7 @@ import (
 	"github.com/mqtt-home/roborock-mqtt/integration/watchdog"
 	loxonedirect "github.com/mqtt-home/roborock-mqtt/loxone/direct"
 	"github.com/mqtt-home/roborock-mqtt/roborock"
+	"github.com/mqtt-home/roborock-mqtt/updater"
 	"github.com/mqtt-home/roborock-mqtt/version"
 	"github.com/mqtt-home/roborock-mqtt/web"
 	"github.com/philipparndt/go-logger"
@@ -59,7 +60,61 @@ var (
 	watchdogRecovery      atomic.Bool
 	processStartedAt      = time.Now()
 	updateChecker         = updates.NewChecker(version.Version, version.GitCommit)
+	updaterClient         *updates.UpdaterClient
 )
+
+func configureUpdaterClient() error {
+	tokenPath := filepath.Join(dataDir, "updater-token")
+	token, err := os.ReadFile(tokenPath)
+	if os.IsNotExist(err) {
+		buffer := make([]byte, 32)
+		if _, err := rand.Read(buffer); err != nil {
+			return fmt.Errorf("generate updater token: %w", err)
+		}
+		encoded := fmt.Sprintf("%x", buffer)
+		if err := os.WriteFile(tokenPath, []byte(encoded+"\n"), 0600); err != nil {
+			return fmt.Errorf("persist updater token: %w", err)
+		}
+		token = []byte(encoded)
+	} else if err != nil {
+		return fmt.Errorf("read updater token: %w", err)
+	}
+	if err := os.Chmod(tokenPath, 0600); err != nil {
+		return fmt.Errorf("secure updater token: %w", err)
+	}
+	endpoint := strings.TrimSpace(os.Getenv("ROBOROCK_UPDATER_URL"))
+	if endpoint == "" {
+		endpoint = "http://updater:8090"
+	}
+	client, err := updates.NewUpdaterClient(endpoint, string(token))
+	if err != nil {
+		return err
+	}
+	updaterClient = client
+	return nil
+}
+
+func startManualUpdate(ctx context.Context, channel string) (updater.Operation, error) {
+	if updaterClient == nil {
+		return updater.Operation{}, fmt.Errorf("isolated updater is not configured")
+	}
+	info, err := updateChecker.Check(ctx, channel)
+	if err != nil {
+		return updater.Operation{}, err
+	}
+	if !info.Available || info.LatestVersion == "" {
+		return updater.Operation{}, fmt.Errorf("no update is available on the %s channel", channel)
+	}
+	tag, expected := "edge", "edge"
+	if channel != "edge" {
+		tag, expected = "v"+strings.TrimPrefix(info.LatestVersion, "v"), strings.TrimPrefix(info.LatestVersion, "v")
+	}
+	requestIDBytes := make([]byte, 16)
+	if _, err := rand.Read(requestIDBytes); err != nil {
+		return updater.Operation{}, fmt.Errorf("generate update request ID: %w", err)
+	}
+	return updaterClient.Start(ctx, updater.Request{RequestID: fmt.Sprintf("web-%x", requestIDBytes), Tag: tag, ExpectedVersion: expected})
+}
 
 func installedChannel() string {
 	value := strings.ToLower(strings.TrimSpace(version.Version))
@@ -1198,6 +1253,9 @@ func main() {
 	// Data and session directories next to the config file
 	dataDir = filepath.Dir(configFile)
 	sessionDir := filepath.Join(dataDir, ".session")
+	if err := configureUpdaterClient(); err != nil {
+		logger.Warn("Manual updater client is unavailable", "error", err)
+	}
 
 	// Initialize Roborock REST client
 	restClient := roborock.NewClient(cfg.Roborock.BaseURL, cfg.Roborock.Username, cfg.Roborock.Password, cfg.Roborock.ClientID)
@@ -1254,6 +1312,13 @@ func main() {
 		CheckUpdates: func(ctx context.Context, channel string) (updates.Info, error) {
 			return updateChecker.Check(ctx, channel)
 		},
+		UpdaterStatus: func(ctx context.Context) (updater.Operation, error) {
+			if updaterClient == nil {
+				return updater.Operation{}, fmt.Errorf("isolated updater is not configured")
+			}
+			return updaterClient.Status(ctx)
+		},
+		InstallUpdate: startManualUpdate,
 	})
 
 	// Wire schedule engine to web server if bridge already started

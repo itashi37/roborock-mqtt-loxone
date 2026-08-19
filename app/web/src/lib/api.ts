@@ -1,6 +1,6 @@
 import type { DeviceSummary } from '@/types/status';
 import type { AdvancedDiagnosticsResponse, LoxoneExportSelection, LoxoneIntegration, LoxoneMQTTTest, LoxoneRoom } from '@/types/loxone';
-import type { SystemStatus, UpdateInfo } from '@/types/system';
+import type { SystemStatus, UpdateInfo, UpdateOperation } from '@/types/system';
 
 export const API_BASE = import.meta.env.DEV ? 'http://localhost:8080/api' : '/api';
 
@@ -16,6 +16,24 @@ export async function checkForUpdates(channel: 'stable' | 'edge'): Promise<Updat
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Update check failed');
+  return data;
+}
+
+export async function fetchUpdateOperation(): Promise<UpdateOperation> {
+  const response = await fetch(`${API_BASE}/system/updates/operation`, { cache: 'no-store' });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Isolated updater is unavailable');
+  return data;
+}
+
+export async function installUpdate(channel: 'stable' | 'edge'): Promise<UpdateOperation> {
+  const response = await fetch(`${API_BASE}/system/updates/install`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Roborock-Intent': 'install-update' },
+    body: JSON.stringify({ channel }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Update installation failed to start');
   return data;
 }
 

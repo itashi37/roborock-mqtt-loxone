@@ -68,17 +68,16 @@ access is effectively root-equivalent on the NAS. `read_only`,
 and the strict allowlist reduce exposure but do not make Docker-socket access
 unprivileged. Never expose port 8090 outside the private Compose network.
 
-Generate a dedicated token and determine the Docker socket group ID before
-enabling the profile:
+Determine the Docker socket group ID before enabling the profile:
 
 ```bash
-openssl rand -hex 32
 stat -c '%g' /var/run/docker.sock
 ```
 
-Store the token in `deploy/updater-token` with mode `0600`, and set
-`DOCKER_GID` in the Compose `.env`; the secret is mounted as a file and does
-not appear in the container environment. Then start the optional service with
+Set `DOCKER_GID` in the Compose `.env`. The bridge generates a dedicated random
+token as `updater-token` in the shared data volume with mode `0600`; both
+processes read it as a file, and it never appears in the container environment,
+API or logs. Then start the optional service with
 `docker compose --profile updates up -d`.
 The updater backs up the data volume under `backups/`, pulls the allowlisted
 image, recreates only `roborock-mqtt-loxone`, waits for its Docker healthcheck,
@@ -86,6 +85,16 @@ verifies the reported version, and restores the previous container on failure.
 Operation state is persisted as `update-operation.json`. A Docker socket proxy
 can still be placed in front of the updater, but the create/start/stop/remove
 and image-pull permissions required for replacement remain highly privileged.
+
+After the `updates` profile is healthy, `/system` enables **Install update**
+only for metadata freshly verified by the backend. The browser cannot submit an
+image repository or arbitrary tag. A confirmation step starts the operation,
+then the page follows `preparing`, `pulling`, `backing_up`, `restarting`,
+`validating`, `success`, `rollback`, or `failed`. Because the operation is
+stored in the data volume, reopening the page after the bridge restart resumes
+the same progress/result. Same-origin and explicit-intent headers protect the
+browser endpoint from cross-site update requests; the updater independently
+enforces its token, anti-replay IDs and rate limit.
 
 ```bash
 git clone https://github.com/itashi37/roborock-mqtt-loxone.git
@@ -715,6 +724,8 @@ make docker
 | `GET` | `/api/ready` | Dependency readiness probe |
 | `GET` | `/api/system/status` | Sanitized runtime, volume, transport and version status |
 | `POST` | `/api/system/updates/check` | Read-only Stable/Edge update metadata check |
+| `GET` | `/api/system/updates/operation` | Persistent isolated-updater operation state |
+| `POST` | `/api/system/updates/install` | Start the freshly verified allowlisted update |
 | `GET` | `/api/fleet/health` | Fleet health, latency and polling backoff |
 | `GET` | `/api/setup/status` | Sanitized setup/integration status |
 | `PUT` | `/api/setup/settings` | Persist and live-apply integration settings |

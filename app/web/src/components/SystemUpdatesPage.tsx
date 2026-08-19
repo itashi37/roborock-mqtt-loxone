@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, Clock3, Database, ExternalLink, HardDrive, RefreshCw, Server, ShieldCheck, Wifi } from 'lucide-react';
-import { checkForUpdates, fetchSystemStatus } from '@/lib/api';
-import type { SystemStatus } from '@/types/system';
+import { checkForUpdates, fetchSystemStatus, fetchUpdateOperation, installUpdate } from '@/lib/api';
+import type { SystemStatus, UpdateOperation } from '@/types/system';
+
+const activeUpdateStages = new Set(['preparing', 'pulling', 'backing_up', 'restarting', 'validating', 'rollback']);
 
 export function SystemUpdatesPage({ returnSlug }: { returnSlug?: string }) {
   const [status, setStatus] = useState<SystemStatus | null>(null);
@@ -10,6 +12,9 @@ export function SystemUpdatesPage({ returnSlug }: { returnSlug?: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [showNotes, setShowNotes] = useState(false);
+  const [operation, setOperation] = useState<UpdateOperation | null>(null);
+  const [updaterAvailable, setUpdaterAvailable] = useState<boolean | null>(null);
+  const [confirmInstall, setConfirmInstall] = useState(false);
 
   const load = async () => {
     setError('');
@@ -22,7 +27,22 @@ export function SystemUpdatesPage({ returnSlug }: { returnSlug?: string }) {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  const loadOperation = async () => {
+    try {
+      const value = await fetchUpdateOperation();
+      setOperation(value); setUpdaterAvailable(true);
+      if (value.stage === 'success') void load();
+    } catch {
+      setUpdaterAvailable(false);
+    }
+  };
+
+  useEffect(() => { void load(); void loadOperation(); }, []);
+  useEffect(() => {
+    if (!operation || !activeUpdateStages.has(operation.stage)) return;
+    const timer = window.setInterval(() => void loadOperation(), 2000);
+    return () => window.clearInterval(timer);
+  }, [operation?.stage]);
 
   const check = async () => {
     setBusy(true); setError(''); setShowNotes(false);
@@ -31,6 +51,18 @@ export function SystemUpdatesPage({ returnSlug }: { returnSlug?: string }) {
       setStatus(current => current ? { ...current, update } : current);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Update check failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const install = async () => {
+    setBusy(true); setError(''); setConfirmInstall(false);
+    try {
+      const next = await installUpdate(channel);
+      setOperation(next); setUpdaterAvailable(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Update installation failed to start');
     } finally {
       setBusy(false);
     }
@@ -76,7 +108,10 @@ export function SystemUpdatesPage({ returnSlug }: { returnSlug?: string }) {
         {!update.checked_at ? <p className="text-sm text-muted-foreground">No update check has been performed since this bridge started.</p> : <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3">{update.available ? <AlertTriangle className="mt-0.5 h-5 w-5 text-blue-500" /> : <CheckCircle2 className="mt-0.5 h-5 w-5 text-green-500" />}<div><strong>{update.available ? `Version ${update.latest_version} is available` : 'You are up to date'}</strong><p className="mt-1 text-xs text-muted-foreground">Checked {formatDate(update.checked_at)}{update.published_at ? ` · Published ${formatDate(update.published_at)}` : ''}</p></div></div><div className="flex gap-2">{update.release_notes && <button onClick={() => setShowNotes(value => !value)} className="touch-target rounded-lg border border-border px-3 text-sm hover:bg-accent">View release notes</button>}{update.release_url && <a href={update.release_url} target="_blank" rel="noreferrer" className="touch-target inline-flex items-center gap-1 rounded-lg border border-border px-3 text-sm hover:bg-accent">GitHub <ExternalLink className="h-3.5 w-3.5" /></a>}</div></div>}
         {showNotes && update.release_notes && <pre className="mt-4 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-background p-4 text-sm leading-relaxed">{update.release_notes}</pre>}
       </div>
-      <div className="mt-4 flex items-start gap-2 text-xs text-muted-foreground"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-green-500" /><span>Checking is read-only and uses public GitHub metadata. This bridge never receives Docker access or Registry credentials.</span></div>
+      {update.available && update.checked_at && <div className="mt-4 rounded-xl border border-amber-500/25 bg-amber-500/5 p-4">{!confirmInstall ? <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><strong>Manual installation</strong><p className="mt-1 text-xs text-muted-foreground">The isolated updater backs up the data volume and rolls back automatically if the new bridge is unhealthy.</p></div><button onClick={() => setConfirmInstall(true)} disabled={busy || updaterAvailable !== true || Boolean(operation && activeUpdateStages.has(operation.stage))} className="touch-target rounded-xl bg-amber-500 px-5 font-medium text-black disabled:opacity-50">Install update</button></div> : <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><strong>Confirm installation of {update.latest_version}</strong><p className="mt-1 text-xs text-muted-foreground">Robot commands and the Web interface will be briefly unavailable during restart.</p></div><div className="flex gap-2"><button onClick={() => setConfirmInstall(false)} className="touch-target rounded-xl border border-border px-4">Cancel</button><button onClick={() => void install()} className="touch-target rounded-xl bg-red-600 px-4 font-medium text-white">Confirm & install</button></div></div>}</div>}
+      {updaterAvailable === false && <p className="mt-3 text-xs text-amber-600">The isolated updater is unavailable. Start the Compose <code>updates</code> profile to enable installation.</p>}
+      {operation && operation.stage !== 'idle' && <UpdateProgress operation={operation} />}
+      <div className="mt-4 flex items-start gap-2 text-xs text-muted-foreground"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-green-500" /><span>The bridge only sends an authenticated allowlisted request. Docker access remains confined to the isolated updater.</span></div>
     </Card>
 
     <Card title="Health details" icon={<Activity className="h-5 w-5" />}>
@@ -91,6 +126,7 @@ function SummaryCard({ icon, label, value, detail, tone = 'blue' }: { icon: Reac
 function KeyValue({ label, value, mono = false, badge }: { label: string; value: string; mono?: boolean; badge?: string }) { return <div className="flex items-center justify-between gap-4 border-b border-border py-3 last:border-0"><span className="text-sm text-muted-foreground">{label}</span><span className={`min-w-0 truncate text-right text-sm ${mono ? 'font-mono' : ''}`}>{value}{badge && <span className="ml-2 rounded-full bg-blue-500/10 px-2 py-0.5 text-xs text-blue-600">{badge}</span>}</span></div>; }
 function Pill({ tone, children }: { tone: string; children: React.ReactNode }) { const color = tone === 'green' ? 'bg-green-500/10 text-green-600' : tone === 'red' ? 'bg-red-500/10 text-red-600' : tone === 'amber' ? 'bg-amber-500/10 text-amber-600' : 'bg-muted text-muted-foreground'; return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${color}`}>{children}</span>; }
 function ChannelButton({ active, onClick, title, subtitle }: { active: boolean; onClick: () => void; title: string; subtitle: string }) { return <button onClick={onClick} className={`rounded-lg p-2 text-left transition ${active ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}><strong className="block text-sm">{title}</strong><span className="text-[11px]">{subtitle}</span></button>; }
+function UpdateProgress({ operation }: { operation: UpdateOperation }) { const stages = ['preparing', 'pulling', 'backing_up', 'restarting', 'validating', 'success']; const current = stages.indexOf(operation.stage); return <div className={`mt-4 rounded-xl border p-4 ${operation.stage === 'failed' ? 'border-red-500/30 bg-red-500/5' : operation.stage === 'success' ? 'border-green-500/30 bg-green-500/5' : 'border-blue-500/30 bg-blue-500/5'}`}><div className="flex items-center justify-between gap-3"><strong>{operation.stage === 'failed' ? 'Update failed' : operation.stage === 'rollback' ? 'Rollback in progress' : operation.stage === 'success' ? 'Update installed' : 'Update in progress'}</strong><Pill tone={operation.stage === 'failed' ? 'red' : operation.stage === 'success' ? 'green' : 'gray'}>{humanize(operation.stage)}</Pill></div><div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-6">{stages.map((stage, index) => <div key={stage} className={`rounded-lg px-2 py-2 text-center text-[11px] ${index <= current ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>{humanize(stage)}</div>)}</div>{operation.error && <p className="mt-3 text-sm text-red-600">{operation.error}</p>}{operation.rollback_error && <p className="mt-1 text-xs text-red-600">Rollback: {operation.rollback_error}</p>}<p className="mt-3 text-xs text-muted-foreground">Operation {operation.id || 'unknown'} · Last update {formatDate(operation.updated_at)}</p></div>; }
 const yesNo = (value: boolean) => value ? 'OK' : 'KO';
 const humanize = (value: string) => value.replace(/_/g, ' ').replace(/\b\w/g, (letter: string) => letter.toUpperCase());
 const shortCommit = (value: string) => value.length > 12 ? value.slice(0, 12) : value;

@@ -49,3 +49,20 @@ export interface SystemStatus {
   transports: Record<string, { enabled: boolean; connected: boolean; last_success?: string; last_error?: string }>;
   update: UpdateInfo;
 }
+
+export type UpdateStage = 'idle' | 'preparing' | 'pulling' | 'backing_up' | 'restarting' | 'validating' | 'success' | 'rollback' | 'failed';
+
+export interface UpdateOperation {
+  id?: string;
+  stage: UpdateStage;
+  tag?: string;
+  expected_version?: string;
+  previous_image?: string;
+  target_image?: string;
+  backup_path?: string;
+  started_at?: string;
+  updated_at?: string;
+  completed_at?: string;
+  error?: string;
+  rollback_error?: string;
+}
