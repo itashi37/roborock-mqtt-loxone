@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mqtt-home/roborock-mqtt/config"
 	"github.com/mqtt-home/roborock-mqtt/integration/updates"
 	"github.com/mqtt-home/roborock-mqtt/roborock"
 	"github.com/mqtt-home/roborock-mqtt/updater"
@@ -25,6 +26,7 @@ func TestSystemStatusAndUpdateCheck(t *testing.T) {
 		InstallUpdate: func(_ context.Context, channel string) (updater.Operation, error) {
 			return updater.Operation{ID: channel, Stage: updater.StagePreparing}, nil
 		},
+		SaveUpdateSettings: func(config.UpdateConfig) error { return nil },
 	})
 
 	statusRequest := httptest.NewRequest(http.MethodGet, "/api/system/status", nil)

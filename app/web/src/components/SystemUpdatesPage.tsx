@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, Clock3, Database, ExternalLink, HardDrive, RefreshCw, Server, ShieldCheck, Wifi } from 'lucide-react';
-import { checkForUpdates, fetchSystemStatus, fetchUpdateOperation, installUpdate } from '@/lib/api';
-import type { SystemStatus, UpdateOperation } from '@/types/system';
+import { checkForUpdates, fetchSystemStatus, fetchUpdateOperation, installUpdate, saveUpdateSettings } from '@/lib/api';
+import type { SystemStatus, UpdateOperation, UpdateSettings } from '@/types/system';
 
 const activeUpdateStages = new Set(['preparing', 'pulling', 'backing_up', 'restarting', 'validating', 'rollback']);
 
@@ -15,12 +15,15 @@ export function SystemUpdatesPage({ returnSlug }: { returnSlug?: string }) {
   const [operation, setOperation] = useState<UpdateOperation | null>(null);
   const [updaterAvailable, setUpdaterAvailable] = useState<boolean | null>(null);
   const [confirmInstall, setConfirmInstall] = useState(false);
+  const [settings, setSettings] = useState<UpdateSettings | null>(null);
+  const [settingsSaved, setSettingsSaved] = useState(false);
 
   const load = async () => {
     setError('');
     try {
       const value = await fetchSystemStatus();
       setStatus(value);
+      setSettings(value.update_settings);
       setChannel(value.channel === 'edge' ? 'edge' : 'stable');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to load system status');
@@ -63,6 +66,20 @@ export function SystemUpdatesPage({ returnSlug }: { returnSlug?: string }) {
       setOperation(next); setUpdaterAvailable(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Update installation failed to start');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const savePolicy = async () => {
+    if (!settings) return;
+    setBusy(true); setError(''); setSettingsSaved(false);
+    try {
+      const saved = await saveUpdateSettings(settings);
+      setSettings(saved); setSettingsSaved(true);
+      window.setTimeout(() => setSettingsSaved(false), 3000);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Failed to save update policy');
     } finally {
       setBusy(false);
     }
@@ -114,6 +131,20 @@ export function SystemUpdatesPage({ returnSlug }: { returnSlug?: string }) {
       <div className="mt-4 flex items-start gap-2 text-xs text-muted-foreground"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-green-500" /><span>The bridge only sends an authenticated allowlisted request. Docker access remains confined to the isolated updater.</span></div>
     </Card>
 
+    {settings && <Card title="Automatic update policy" icon={<Clock3 className="h-5 w-5" />}>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <label className="text-sm"><span className="font-medium">Mode</span><select value={settings.mode} onChange={event => setSettings({ ...settings, mode: event.target.value as UpdateSettings['mode'] })} className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2"><option value="off">Off</option><option value="notify">Notify only (recommended)</option><option value="automatic">Automatic</option></select></label>
+        <label className="text-sm"><span className="font-medium">Channel</span><select value={settings.channel} onChange={event => setSettings({ ...settings, channel: event.target.value as UpdateSettings['channel'], allow_edge_automatic: event.target.value === 'edge' ? settings.allow_edge_automatic : false })} className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2"><option value="stable">Stable</option><option value="edge">Beta / Edge</option></select></label>
+        <label className="text-sm"><span className="font-medium">Allowed from</span><input type="time" value={settings.window_start} onChange={event => setSettings({ ...settings, window_start: event.target.value })} className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+        <label className="text-sm"><span className="font-medium">Allowed until</span><input type="time" value={settings.window_end} onChange={event => setSettings({ ...settings, window_end: event.target.value })} className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+        <label className="text-sm"><span className="font-medium">Delay after publication</span><div className="mt-2 flex items-center gap-2"><input type="number" min="1" max="720" value={settings.delay_hours} onChange={event => setSettings({ ...settings, delay_hours: Number(event.target.value) })} className="w-28 rounded-xl border border-border bg-background px-3 py-2" /><span className="text-muted-foreground">hours</span></div></label>
+        <div className="text-sm"><span className="font-medium">Allowed days</span><div className="mt-2 flex flex-wrap gap-1">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, index) => <button key={day} onClick={() => setSettings({ ...settings, allowed_days: settings.allowed_days.includes(index) ? settings.allowed_days.filter(value => value !== index) : [...settings.allowed_days, index].sort() })} className={`rounded-lg px-2.5 py-2 text-xs ${settings.allowed_days.includes(index) ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>{day}</button>)}</div></div>
+      </div>
+      <div className="mt-5 grid gap-2 sm:grid-cols-3"><PolicyCheck checked={settings.prevent_robot_active} label="Block while robot active" onChange={value => setSettings({ ...settings, prevent_robot_active: value })} /><PolicyCheck checked={settings.prevent_cleaning} label="Block during cleaning" onChange={value => setSettings({ ...settings, prevent_cleaning: value })} /><PolicyCheck checked={settings.prevent_command_in_progress} label="Block with command running" onChange={value => setSettings({ ...settings, prevent_command_in_progress: value })} /></div>
+      {settings.mode === 'automatic' && settings.channel === 'edge' && <label className="mt-4 flex items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/5 p-4 text-sm"><input type="checkbox" checked={settings.allow_edge_automatic} onChange={event => setSettings({ ...settings, allow_edge_automatic: event.target.checked })} className="mt-1" /><span><strong>I explicitly authorize automatic Edge updates.</strong><span className="mt-1 block text-xs text-muted-foreground">Edge follows every successful build from main and is never automatic without this separate consent.</span></span></label>}
+      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="text-xs text-muted-foreground"><strong className="text-foreground">Scheduler:</strong> {status.auto_update.last_decision || 'Waiting for first evaluation'}{status.auto_update.next_window && ` · Next window ${formatDate(status.auto_update.next_window)}`}{status.auto_update.last_error && <span className="block text-red-500">{status.auto_update.last_error}</span>}</div><button onClick={() => void savePolicy()} disabled={busy || settings.allowed_days.length === 0 || (settings.mode === 'automatic' && settings.channel === 'edge' && !settings.allow_edge_automatic)} className="touch-target rounded-xl bg-primary px-5 font-medium text-primary-foreground disabled:opacity-50">{settingsSaved ? 'Saved' : 'Save update policy'}</button></div>
+    </Card>}
+
     <Card title="Health details" icon={<Activity className="h-5 w-5" />}>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(status.health.components || {}).map(([name, component]) => <div key={name} className="rounded-xl border border-border p-3"><div className="flex items-center justify-between gap-2"><strong className="text-sm">{humanize(name)}</strong><Pill tone={component.healthy ? 'green' : component.required ? 'red' : 'gray'}>{component.healthy ? 'OK' : component.required ? 'Problem' : 'Optional'}</Pill></div><p className="mt-2 text-xs text-muted-foreground">{component.detail || (component.last_activity ? formatDate(component.last_activity) : 'No detail')}</p></div>)}</div>
     </Card>
@@ -126,6 +157,7 @@ function SummaryCard({ icon, label, value, detail, tone = 'blue' }: { icon: Reac
 function KeyValue({ label, value, mono = false, badge }: { label: string; value: string; mono?: boolean; badge?: string }) { return <div className="flex items-center justify-between gap-4 border-b border-border py-3 last:border-0"><span className="text-sm text-muted-foreground">{label}</span><span className={`min-w-0 truncate text-right text-sm ${mono ? 'font-mono' : ''}`}>{value}{badge && <span className="ml-2 rounded-full bg-blue-500/10 px-2 py-0.5 text-xs text-blue-600">{badge}</span>}</span></div>; }
 function Pill({ tone, children }: { tone: string; children: React.ReactNode }) { const color = tone === 'green' ? 'bg-green-500/10 text-green-600' : tone === 'red' ? 'bg-red-500/10 text-red-600' : tone === 'amber' ? 'bg-amber-500/10 text-amber-600' : 'bg-muted text-muted-foreground'; return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${color}`}>{children}</span>; }
 function ChannelButton({ active, onClick, title, subtitle }: { active: boolean; onClick: () => void; title: string; subtitle: string }) { return <button onClick={onClick} className={`rounded-lg p-2 text-left transition ${active ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}><strong className="block text-sm">{title}</strong><span className="text-[11px]">{subtitle}</span></button>; }
+function PolicyCheck({ checked, label, onChange }: { checked: boolean; label: string; onChange: (value: boolean) => void }) { return <label className="flex items-center gap-2 rounded-xl border border-border p-3 text-sm"><input type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)} /><span>{label}</span></label>; }
 function UpdateProgress({ operation }: { operation: UpdateOperation }) { const stages = ['preparing', 'pulling', 'backing_up', 'restarting', 'validating', 'success']; const current = stages.indexOf(operation.stage); return <div className={`mt-4 rounded-xl border p-4 ${operation.stage === 'failed' ? 'border-red-500/30 bg-red-500/5' : operation.stage === 'success' ? 'border-green-500/30 bg-green-500/5' : 'border-blue-500/30 bg-blue-500/5'}`}><div className="flex items-center justify-between gap-3"><strong>{operation.stage === 'failed' ? 'Update failed' : operation.stage === 'rollback' ? 'Rollback in progress' : operation.stage === 'success' ? 'Update installed' : 'Update in progress'}</strong><Pill tone={operation.stage === 'failed' ? 'red' : operation.stage === 'success' ? 'green' : 'gray'}>{humanize(operation.stage)}</Pill></div><div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-6">{stages.map((stage, index) => <div key={stage} className={`rounded-lg px-2 py-2 text-center text-[11px] ${index <= current ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>{humanize(stage)}</div>)}</div>{operation.error && <p className="mt-3 text-sm text-red-600">{operation.error}</p>}{operation.rollback_error && <p className="mt-1 text-xs text-red-600">Rollback: {operation.rollback_error}</p>}<p className="mt-3 text-xs text-muted-foreground">Operation {operation.id || 'unknown'} · Last update {formatDate(operation.updated_at)}</p></div>; }
 const yesNo = (value: boolean) => value ? 'OK' : 'KO';
 const humanize = (value: string) => value.replace(/_/g, ' ').replace(/\b\w/g, (letter: string) => letter.toUpperCase());

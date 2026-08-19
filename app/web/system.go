@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mqtt-home/roborock-mqtt/config"
+	"github.com/mqtt-home/roborock-mqtt/integration/autoupdate"
 	"github.com/mqtt-home/roborock-mqtt/integration/updates"
 	"github.com/mqtt-home/roborock-mqtt/integration/watchdog"
 	"github.com/mqtt-home/roborock-mqtt/updater"
@@ -42,13 +44,46 @@ type SystemStatus struct {
 	DataVolume         DataVolumeStatus                 `json:"data_volume"`
 	Transports         map[string]SystemTransportStatus `json:"transports"`
 	Update             updates.Info                     `json:"update"`
+	UpdateSettings     config.UpdateConfig              `json:"update_settings"`
+	AutoUpdate         autoupdate.Diagnostics           `json:"auto_update"`
 }
 
 type SystemDependencies struct {
-	Status        func() SystemStatus
-	CheckUpdates  func(context.Context, string) (updates.Info, error)
-	UpdaterStatus func(context.Context) (updater.Operation, error)
-	InstallUpdate func(context.Context, string) (updater.Operation, error)
+	Status             func() SystemStatus
+	CheckUpdates       func(context.Context, string) (updates.Info, error)
+	UpdaterStatus      func(context.Context) (updater.Operation, error)
+	InstallUpdate      func(context.Context, string) (updater.Operation, error)
+	SaveUpdateSettings func(config.UpdateConfig) error
+}
+
+func (ws *WebServer) systemSaveUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	dependencies := ws.getSystemIntegration()
+	if dependencies == nil || dependencies.SaveUpdateSettings == nil {
+		http.Error(w, `{"error":"update settings are not ready"}`, http.StatusServiceUnavailable)
+		return
+	}
+	if r.Header.Get("X-Roborock-Intent") != "save-update-settings" || !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
+		http.Error(w, `{"error":"missing settings confirmation header"}`, http.StatusForbidden)
+		return
+	}
+	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" && !sameOrigin(origin, r.Host) {
+		http.Error(w, `{"error":"cross-origin settings request rejected"}`, http.StatusForbidden)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	var settings config.UpdateConfig
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&settings); err != nil {
+		writeJSONError(w, "invalid update settings", http.StatusBadRequest)
+		return
+	}
+	if err := dependencies.SaveUpdateSettings(settings); err != nil {
+		writeJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(config.Get().Updates)
 }
 
 func (ws *WebServer) systemUpdateOperation(w http.ResponseWriter, r *http.Request) {

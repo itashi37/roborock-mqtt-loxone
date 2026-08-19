@@ -195,3 +195,34 @@ func TestLoadConfigLoxoneCustomTopic(t *testing.T) {
 		t.Fatalf("got timeout %d, want 120", loaded.Loxone.CommandTimeoutSeconds)
 	}
 }
+
+func TestUpdateSettingsDefaultToNotifyAndPersistSeparately(t *testing.T) {
+	directory := t.TempDir()
+	file := filepath.Join(directory, "config.json")
+	if err := os.WriteFile(file, []byte(`{"mqtt":{"enabled":false},"roborock":{},"web":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadConfig(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Updates.Mode != "notify" || loaded.Updates.Channel != "stable" || loaded.Updates.DelayHours != 24 {
+		t.Fatalf("unexpected update defaults: %+v", loaded.Updates)
+	}
+	settings := loaded.Updates
+	settings.Mode, settings.Channel, settings.AllowEdgeAutomatic = "automatic", "edge", true
+	if err := SaveUpdateConfig(settings); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(directory, updateSettingsFile))
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("update settings permissions: info=%v err=%v", info, err)
+	}
+	reloaded, err := LoadConfig(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Updates.Mode != "automatic" || reloaded.Updates.Channel != "edge" || !reloaded.Updates.AllowEdgeAutomatic {
+		t.Fatalf("update settings were not restored: %+v", reloaded.Updates)
+	}
+}

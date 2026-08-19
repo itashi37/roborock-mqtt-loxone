@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/mqtt-home/roborock-mqtt/config"
+	"github.com/mqtt-home/roborock-mqtt/integration/autoupdate"
 	bridgehealth "github.com/mqtt-home/roborock-mqtt/integration/health"
 	"github.com/mqtt-home/roborock-mqtt/integration/localmqtt"
 	"github.com/mqtt-home/roborock-mqtt/integration/updates"
@@ -61,7 +62,49 @@ var (
 	processStartedAt      = time.Now()
 	updateChecker         = updates.NewChecker(version.Version, version.GitCommit)
 	updaterClient         *updates.UpdaterClient
+	autoUpdateScheduler   *autoupdate.Scheduler
 )
+
+func automaticUpdateGuard() autoupdate.GuardState {
+	guard := autoupdate.GuardState{}
+	for _, state := range deviceStateStore.All() {
+		if state.Status == nil {
+			continue
+		}
+		if state.Status.InCleaning {
+			guard.Cleaning, guard.RobotActive = true, true
+		}
+		switch strings.ToLower(state.Status.State) {
+		case "cleaning", "spot_cleaning", "segment_cleaning", "zoned_cleaning", "paused", "returning", "returning_home", "going_to_target", "washing_mop", "going_to_wash_mop", "emptying_dustbin", "servicing_dock", "mapping", "manual":
+			guard.RobotActive = true
+		}
+	}
+	if commandCoordinator != nil {
+		guard.CommandsInFlight = commandCoordinator.Diagnostics().InFlight
+	}
+	return guard
+}
+
+func startAutomaticUpdates() {
+	if autoUpdateScheduler != nil {
+		autoUpdateScheduler.Stop()
+	}
+	autoUpdateScheduler = autoupdate.NewScheduler(autoupdate.Dependencies{
+		Settings: func() config.UpdateConfig { return config.Get().Updates },
+		Check: func(ctx context.Context, channel string) (updates.Info, error) {
+			return updateChecker.Check(ctx, channel)
+		},
+		Install: startManualUpdate,
+		Operation: func(ctx context.Context) (updater.Operation, error) {
+			if updaterClient == nil {
+				return updater.Operation{}, fmt.Errorf("isolated updater is not configured")
+			}
+			return updaterClient.Status(ctx)
+		},
+		Guard: automaticUpdateGuard, DataDir: dataDir,
+	})
+	autoUpdateScheduler.Start()
+}
 
 func configureUpdaterClient() error {
 	tokenPath := filepath.Join(dataDir, "updater-token")
@@ -158,7 +201,7 @@ func systemStatusSnapshot() web.SystemStatus {
 	}
 	mqttDiagnostics := localBroker.Diagnostics()
 	directDiagnostics := directDiagnosticsSnapshot()
-	return web.SystemStatus{
+	status := web.SystemStatus{
 		Product: "roborock-mqtt-loxone", Version: version.Version, GitCommit: version.GitCommit,
 		BuildTime: version.BuildTime, GoVersion: version.GoVersion, Architecture: runtime.GOOS + "/" + runtime.GOARCH,
 		Channel: installedChannel(), UptimeSeconds: int64(now.Sub(processStartedAt).Seconds()),
@@ -169,6 +212,11 @@ func systemStatusSnapshot() web.SystemStatus {
 			"direct": {Enabled: config.Get().Loxone.Direct.Enabled, Connected: !directDiagnostics.LastTransmission.IsZero() && directDiagnostics.LastError == "", LastSuccess: directDiagnostics.LastTransmission, LastError: directDiagnostics.LastError},
 		},
 	}
+	status.UpdateSettings = config.Get().Updates
+	if autoUpdateScheduler != nil {
+		status.AutoUpdate = autoUpdateScheduler.Diagnostics()
+	}
+	return status
 }
 
 func watchdogConfig(cfg config.WatchdogConfig) watchdog.Config {
@@ -1318,8 +1366,10 @@ func main() {
 			}
 			return updaterClient.Status(ctx)
 		},
-		InstallUpdate: startManualUpdate,
+		InstallUpdate:      startManualUpdate,
+		SaveUpdateSettings: config.SaveUpdateConfig,
 	})
+	startAutomaticUpdates()
 
 	// Wire schedule engine to web server if bridge already started
 	if scheduleEngine != nil {
@@ -1362,6 +1412,9 @@ func main() {
 
 	if watchdogMonitor != nil {
 		watchdogMonitor.Stop()
+	}
+	if autoUpdateScheduler != nil {
+		autoUpdateScheduler.Stop()
 	}
 
 	if stopSchedule != nil {

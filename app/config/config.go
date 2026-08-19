@@ -18,6 +18,7 @@ var loadedConfigFile string
 var envVariablePattern = regexp.MustCompile(`\$\{([^}]+)\}`)
 
 const runtimeSettingsFile = "integration-settings.json"
+const updateSettingsFile = "update-settings.json"
 
 // EnsureConfigFile creates the minimal browser-first configuration used by a
 // fresh Docker volume. Existing files are never changed.
@@ -70,6 +71,7 @@ type Config struct {
 	Web           WebConfig          `json:"web"`
 	Notifications NotificationConfig `json:"notifications,omitempty"`
 	Watchdog      WatchdogConfig     `json:"watchdog,omitempty"`
+	Updates       UpdateConfig       `json:"updates,omitempty"`
 	LogLevel      string             `json:"loglevel,omitempty"`
 }
 
@@ -237,6 +239,31 @@ type WatchdogConfig struct {
 
 func (w WatchdogConfig) IsEnabled() bool { return w.Enabled == nil || *w.Enabled }
 
+type UpdateConfig struct {
+	Version                  int    `json:"version"`
+	Mode                     string `json:"mode"`
+	Channel                  string `json:"channel"`
+	WindowStart              string `json:"window_start"`
+	WindowEnd                string `json:"window_end"`
+	DelayHours               int    `json:"delay_hours"`
+	AllowedDays              []int  `json:"allowed_days"`
+	PreventRobotActive       *bool  `json:"prevent_robot_active,omitempty"`
+	PreventCleaning          *bool  `json:"prevent_cleaning,omitempty"`
+	PreventCommandInProgress *bool  `json:"prevent_command_in_progress,omitempty"`
+	AllowEdgeAutomatic       bool   `json:"allow_edge_automatic"`
+}
+
+func boolDefault(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
+}
+
+func (u UpdateConfig) BlocksRobotActive() bool { return boolDefault(u.PreventRobotActive, true) }
+func (u UpdateConfig) BlocksCleaning() bool    { return boolDefault(u.PreventCleaning, true) }
+func (u UpdateConfig) BlocksCommands() bool    { return boolDefault(u.PreventCommandInProgress, true) }
+
 func LoadConfig(file string) (Config, error) {
 	data, err := os.ReadFile(file)
 	if err != nil {
@@ -270,6 +297,14 @@ func LoadConfig(file string) (Config, error) {
 		}
 	} else if !os.IsNotExist(readErr) {
 		return Config{}, fmt.Errorf("read runtime integration settings: %w", readErr)
+	}
+	updateFile := filepath.Join(filepath.Dir(file), updateSettingsFile)
+	if updateData, readErr := os.ReadFile(updateFile); readErr == nil {
+		if decodeErr := json.Unmarshal(updateData, &loaded.Updates); decodeErr != nil {
+			return Config{}, fmt.Errorf("parse update settings: %w", decodeErr)
+		}
+	} else if !os.IsNotExist(readErr) {
+		return Config{}, fmt.Errorf("read update settings: %w", readErr)
 	}
 	applyDefaults(&loaded)
 	cfgMu.Lock()
@@ -322,6 +357,7 @@ func applyDefaults(cfg *Config) {
 	if cfg.Watchdog.MaxQueueDepth <= 0 {
 		cfg.Watchdog.MaxQueueDepth = 256
 	}
+	applyUpdateDefaults(&cfg.Updates)
 
 	cfg.Loxone.Topic = strings.TrimSuffix(strings.TrimSpace(cfg.Loxone.Topic), "/")
 	if cfg.Loxone.Topic == "" {
@@ -396,6 +432,91 @@ func applyDefaults(cfg *Config) {
 		cfg.Notifications.Email.SMTPPort = 587
 	}
 
+}
+
+func applyUpdateDefaults(settings *UpdateConfig) {
+	settings.Version = 1
+	settings.Mode = strings.ToLower(strings.TrimSpace(settings.Mode))
+	if settings.Mode != "off" && settings.Mode != "automatic" && settings.Mode != "notify" {
+		settings.Mode = "notify"
+	}
+	settings.Channel = strings.ToLower(strings.TrimSpace(settings.Channel))
+	if settings.Channel != "edge" {
+		settings.Channel = "stable"
+	}
+	if settings.WindowStart == "" {
+		settings.WindowStart = "02:00"
+	}
+	if settings.WindowEnd == "" {
+		settings.WindowEnd = "05:00"
+	}
+	if settings.DelayHours < 0 {
+		settings.DelayHours = 0
+	}
+	if settings.DelayHours == 0 {
+		settings.DelayHours = 24
+	}
+	if len(settings.AllowedDays) == 0 {
+		settings.AllowedDays = []int{0, 1, 2, 3, 4, 5, 6}
+	}
+	if settings.PreventRobotActive == nil {
+		settings.PreventRobotActive = boolConfig(true)
+	}
+	if settings.PreventCleaning == nil {
+		settings.PreventCleaning = boolConfig(true)
+	}
+	if settings.PreventCommandInProgress == nil {
+		settings.PreventCommandInProgress = boolConfig(true)
+	}
+}
+
+func SaveUpdateConfig(settings UpdateConfig) error {
+	cfgMu.Lock()
+	defer cfgMu.Unlock()
+	if loadedConfigFile == "" {
+		return fmt.Errorf("configuration has not been loaded")
+	}
+	applyUpdateDefaults(&settings)
+	if err := validateUpdateConfig(settings); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal update settings: %w", err)
+	}
+	path := filepath.Join(filepath.Dir(loadedConfigFile), updateSettingsFile)
+	temporary := path + ".tmp"
+	if err := os.WriteFile(temporary, append(data, '\n'), 0600); err != nil {
+		return fmt.Errorf("write update settings: %w", err)
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		return fmt.Errorf("replace update settings: %w", err)
+	}
+	cfg.Updates = settings
+	return nil
+}
+
+func validateUpdateConfig(settings UpdateConfig) error {
+	if settings.Mode != "off" && settings.Mode != "notify" && settings.Mode != "automatic" {
+		return fmt.Errorf("invalid update mode")
+	}
+	if settings.Channel != "stable" && settings.Channel != "edge" {
+		return fmt.Errorf("invalid update channel")
+	}
+	if !regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`).MatchString(settings.WindowStart) || !regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`).MatchString(settings.WindowEnd) {
+		return fmt.Errorf("invalid update time window")
+	}
+	if settings.DelayHours < 0 || settings.DelayHours > 24*30 {
+		return fmt.Errorf("invalid publication delay")
+	}
+	seen := map[int]bool{}
+	for _, day := range settings.AllowedDays {
+		if day < 0 || day > 6 || seen[day] {
+			return fmt.Errorf("invalid allowed days")
+		}
+		seen[day] = true
+	}
+	return nil
 }
 
 func Get() Config {

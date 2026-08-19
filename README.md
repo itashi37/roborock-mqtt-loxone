@@ -96,6 +96,17 @@ the same progress/result. Same-origin and explicit-intent headers protect the
 browser endpoint from cross-site update requests; the updater independently
 enforces its token, anti-replay IDs and rate limit.
 
+Automatic updates are optional and default to **Notify only**. `/system` lets
+you choose Off, Notify only, or Automatic; Stable or Beta/Edge; allowed days
+and local-time window; and a publication delay. Automatic installation is
+deferred while a robot is active or cleaning, while a bridge command is in
+flight, or while another update is running. All three safety blocks default to
+enabled. Edge can never install automatically unless its separate explicit
+authorization checkbox is enabled. The same backup, health validation and
+rollback path as a manual update is always used. Settings are versioned in
+`update-settings.json`, scheduler diagnostics in `autoupdate-state.json`, and
+the default publication delay is 24 hours.
+
 ```bash
 git clone https://github.com/itashi37/roborock-mqtt-loxone.git
 cd roborock-mqtt-loxone
@@ -726,6 +737,7 @@ make docker
 | `POST` | `/api/system/updates/check` | Read-only Stable/Edge update metadata check |
 | `GET` | `/api/system/updates/operation` | Persistent isolated-updater operation state |
 | `POST` | `/api/system/updates/install` | Start the freshly verified allowlisted update |
+| `PUT` | `/api/system/updates/settings` | Save the versioned optional auto-update policy |
 | `GET` | `/api/fleet/health` | Fleet health, latency and polling backoff |
 | `GET` | `/api/setup/status` | Sanitized setup/integration status |
 | `PUT` | `/api/setup/settings` | Persist and live-apply integration settings |

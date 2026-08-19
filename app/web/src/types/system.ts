@@ -48,6 +48,33 @@ export interface SystemStatus {
   data_volume: { path: string; writable: boolean; free_bytes: number; error?: string };
   transports: Record<string, { enabled: boolean; connected: boolean; last_success?: string; last_error?: string }>;
   update: UpdateInfo;
+  update_settings: UpdateSettings;
+  auto_update: AutoUpdateDiagnostics;
+}
+
+export interface UpdateSettings {
+  version: number;
+  mode: 'off' | 'notify' | 'automatic';
+  channel: 'stable' | 'edge';
+  window_start: string;
+  window_end: string;
+  delay_hours: number;
+  allowed_days: number[];
+  prevent_robot_active: boolean;
+  prevent_cleaning: boolean;
+  prevent_command_in_progress: boolean;
+  allow_edge_automatic: boolean;
+}
+
+export interface AutoUpdateDiagnostics {
+  last_check?: string;
+  last_decision?: string;
+  last_version?: string;
+  last_attempt?: string;
+  last_operation?: string;
+  last_error?: string;
+  next_window?: string;
+  guard?: { robot_active: boolean; cleaning: boolean; commands_in_flight: number };
 }
 
 export type UpdateStage = 'idle' | 'preparing' | 'pulling' | 'backing_up' | 'restarting' | 'validating' | 'success' | 'rollback' | 'failed';
