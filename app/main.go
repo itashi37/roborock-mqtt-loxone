@@ -202,6 +202,15 @@ func systemStatusSnapshot() web.SystemStatus {
 	}
 	mqttDiagnostics := localBroker.Diagnostics()
 	directDiagnostics := directDiagnosticsSnapshot()
+	failedDirectInputs := make([]web.SystemInputFailure, 0)
+	for _, input := range directDiagnostics.Inputs {
+		if input.LastError == "" {
+			continue
+		}
+		failedDirectInputs = append(failedDirectInputs, web.SystemInputFailure{
+			Name: input.Input, Field: input.Field, Kind: string(input.Kind), Error: input.LastError,
+		})
+	}
 	status := web.SystemStatus{
 		Product: "roborock-mqtt-loxone", Version: version.Version, GitCommit: version.GitCommit,
 		BuildTime: version.BuildTime, GoVersion: version.GoVersion, Architecture: runtime.GOOS + "/" + runtime.GOARCH,
@@ -210,7 +219,7 @@ func systemStatusSnapshot() web.SystemStatus {
 		Health: health, DataVolume: dataVolumeStatus(), Update: updateChecker.Last(),
 		Transports: map[string]web.SystemTransportStatus{
 			"mqtt":   {Enabled: localMQTTEnabled(), Connected: mqttDiagnostics.Connected, LastSuccess: mqttDiagnostics.ConnectedAt, LastError: mqttDiagnostics.LastError},
-			"direct": {Enabled: config.Get().Loxone.Direct.Enabled, Connected: !directDiagnostics.LastTransmission.IsZero() && directDiagnostics.LastError == "", LastSuccess: directDiagnostics.LastTransmission, LastError: directDiagnostics.LastError},
+			"direct": {Enabled: config.Get().Loxone.Direct.Enabled, Connected: !directDiagnostics.LastTransmission.IsZero() && directDiagnostics.LastError == "", LastSuccess: directDiagnostics.LastTransmission, LastError: directDiagnostics.LastError, FailedInputs: failedDirectInputs},
 		},
 	}
 	status.UpdateSettings = config.Get().Updates

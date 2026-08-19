@@ -16,7 +16,11 @@ import (
 func TestSystemStatusAndUpdateCheck(t *testing.T) {
 	server := NewWebServer(nil, &roborock.Client{}, nil)
 	server.SetSystemIntegration(&SystemDependencies{
-		Status: func() SystemStatus { return SystemStatus{Product: "roborock-mqtt-loxone", Version: "1.0.0"} },
+		Status: func() SystemStatus {
+			return SystemStatus{Product: "roborock-mqtt-loxone", Version: "1.0.0", Transports: map[string]SystemTransportStatus{
+				"direct": {Enabled: true, FailedInputs: []SystemInputFailure{{Name: "RR_bridge_alive", Field: "bridge_alive", Kind: "digital", Error: "Loxone HTTP status 404"}}},
+			}}
+		},
 		CheckUpdates: func(_ context.Context, channel string) (updates.Info, error) {
 			return updates.Info{Channel: channel, LatestVersion: "1.1.0", Available: true}, nil
 		},
@@ -32,7 +36,7 @@ func TestSystemStatusAndUpdateCheck(t *testing.T) {
 	statusRequest := httptest.NewRequest(http.MethodGet, "/api/system/status", nil)
 	statusResponse := httptest.NewRecorder()
 	server.router.ServeHTTP(statusResponse, statusRequest)
-	if statusResponse.Code != http.StatusOK || !strings.Contains(statusResponse.Body.String(), `"version":"1.0.0"`) {
+	if statusResponse.Code != http.StatusOK || !strings.Contains(statusResponse.Body.String(), `"version":"1.0.0"`) || !strings.Contains(statusResponse.Body.String(), `"name":"RR_bridge_alive"`) {
 		t.Fatalf("unexpected status response: %d %s", statusResponse.Code, statusResponse.Body.String())
 	}
 

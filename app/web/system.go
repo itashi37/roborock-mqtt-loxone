@@ -16,10 +16,18 @@ import (
 )
 
 type SystemTransportStatus struct {
-	Enabled     bool      `json:"enabled"`
-	Connected   bool      `json:"connected"`
-	LastSuccess time.Time `json:"last_success,omitempty"`
-	LastError   string    `json:"last_error,omitempty"`
+	Enabled      bool                 `json:"enabled"`
+	Connected    bool                 `json:"connected"`
+	LastSuccess  time.Time            `json:"last_success,omitempty"`
+	LastError    string               `json:"last_error,omitempty"`
+	FailedInputs []SystemInputFailure `json:"failed_inputs,omitempty"`
+}
+
+type SystemInputFailure struct {
+	Name  string `json:"name"`
+	Field string `json:"field"`
+	Kind  string `json:"kind"`
+	Error string `json:"error"`
 }
 
 type DataVolumeStatus struct {

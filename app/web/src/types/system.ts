@@ -46,7 +46,7 @@ export interface SystemStatus {
   last_watchdog_reason?: string;
   health: HealthReport;
   data_volume: { path: string; writable: boolean; free_bytes: number; error?: string };
-  transports: Record<string, { enabled: boolean; connected: boolean; last_success?: string; last_error?: string }>;
+  transports: Record<string, { enabled: boolean; connected: boolean; last_success?: string; last_error?: string; failed_inputs?: Array<{ name: string; field: string; kind: 'digital' | 'analog' | 'text' | string; error: string }> }>;
   update: UpdateInfo;
   update_settings: UpdateSettings;
   auto_update: AutoUpdateDiagnostics;
