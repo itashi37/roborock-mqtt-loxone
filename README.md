@@ -409,6 +409,35 @@ screens:
 | `{loxone_topic}/{slug}/maintenance/filter` | Remaining percentage |
 | `{loxone_topic}/{slug}/maintenance/sensor` | Remaining percentage |
 
+#### Bridge and robot health
+
+Health is published separately so `/core` stays compact and its existing
+contract remains unchanged:
+
+| Topic | Retained | Meaning |
+|-------|----------|---------|
+| `{loxone_topic}/_bridge/bridge_alive` | yes | `1` while the bridge MQTT client is connected; its broker-side Last Will publishes `0` after an ungraceful loss |
+| `{loxone_topic}/_bridge/cloud_connected` | yes | `1` when at least one Roborock cloud transport is connected |
+| `{loxone_topic}/_bridge/bridge_heartbeat` | no | Unix timestamp emitted every 30 seconds, including when no robot value changes |
+| `{loxone_topic}/{slug}/robot_online` | yes | `1` only after the robot has produced status and has not accumulated repeated polling failures |
+
+These topics are optional diagnostics and do not change the recommended two
+subscriptions per robot. An installation that subscribes to the three bridge
+topics uses three additional subscriptions total, not per robot. In Direct
+HTTP mode the equivalent Virtual Inputs are `RR_bridge_alive`,
+`RR_cloud_connected`, `RR_bridge_heartbeat`, and
+`RR_{slug}_robot_online` (subject to the configured prefix/overrides).
+
+Configure a 90-second timeout on `bridge_heartbeat` in Loxone. Direct HTTP
+cannot send a final value after the process, NAS, or network has already
+failed, so an absent heartbeat is the only reliable Direct-mode indication of
+a completely unavailable bridge. Interpretation:
+
+- heartbeat younger than 90 seconds, cloud `1`, robot `1`: all paths work;
+- heartbeat missing: bridge, NAS, or network probably unavailable;
+- heartbeat current, cloud `0`: Roborock cloud or Internet unavailable;
+- heartbeat current, cloud `1`, robot `0`: robot Wi-Fi, power, or response problem.
+
 Stable state values include `offline`, `unknown`, `starting`, `idle`, `manual`,
 `cleaning`, `paused`, `returning`, `charging`, `docked`, `error`,
 `shutting_down`, `updating`, `going_to_target`, `emptying_dustbin`,

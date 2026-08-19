@@ -24,6 +24,7 @@ type InternalDeviceState struct {
 	Name         string             `json:"name"`
 	Model        string             `json:"model"`
 	Online       bool               `json:"online"`
+	RobotOnline  bool               `json:"robot_online"`
 	Status       *PublishedStatus   `json:"status,omitempty"`
 	CurrentRoom  *CurrentRoom       `json:"current_room,omitempty"`
 	RoomMappings []RoomMapping      `json:"room_mappings,omitempty"`
@@ -36,6 +37,11 @@ type InternalDeviceState struct {
 func (s *DeviceStateStore) UpdateHealth(slug string, health DeviceHealth, now time.Time) {
 	s.update(slug, DeviceStateHealth, func(state *InternalDeviceState) {
 		state.Health = health
+		// A cloud socket alone does not prove that the vacuum responds. Require
+		// at least one real status observation and drop the signal after repeated
+		// polling failures. A future local transport can feed the same health
+		// model without changing the Loxone contract.
+		state.RobotOnline = health.Online && state.Status != nil && health.ConsecutiveFailures < 3
 		state.UpdatedAt = now
 	})
 }

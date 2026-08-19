@@ -63,6 +63,7 @@ type loxoneIntegrationResponse struct {
 	DirectAPIUsername     string                        `json:"direct_api_username,omitempty"`
 	DirectTokenConfigured bool                          `json:"direct_token_configured"`
 	DirectDiagnostics     *loxonedirect.SyncDiagnostics `json:"direct_diagnostics,omitempty"`
+	HealthInputs          []loxoneDirectInput           `json:"health_inputs,omitempty"`
 	Robots                []loxoneRobotResponse         `json:"robots"`
 	Fleet                 *roborock.FleetHealth         `json:"fleet,omitempty"`
 	TemplateStatus        templates.Status              `json:"template_status"`
@@ -133,6 +134,9 @@ func (ws *WebServer) buildLoxoneIntegration() (loxoneIntegrationResponse, error)
 		SubscriptionsPerRobot: 2,
 		Robots:                []loxoneRobotResponse{},
 		TemplateStatus:        templates.StatusForCurrentBuild(),
+	}
+	if cfg.Loxone.Direct.Enabled {
+		response.HealthInputs = directHealthInputPlan()
 	}
 	dependencies := ws.getLoxoneIntegration()
 	if dependencies != nil {
@@ -418,6 +422,7 @@ type loxoneExportPack struct {
 	SubscriptionLimit     int                 `json:"subscription_limit"`
 	ExceedsLimit          bool                `json:"exceeds_limit"`
 	Warning               string              `json:"warning,omitempty"`
+	HealthInputs          []loxoneDirectInput `json:"health_inputs,omitempty"`
 	Robots                []loxoneExportRobot `json:"robots"`
 	TemplateStatus        templates.Status    `json:"native_template_status"`
 }
@@ -502,6 +507,7 @@ func (ws *WebServer) buildLoxoneExport(request loxoneExportRequest) (loxoneExpor
 		SubscriptionLimit:     loxoneSubscriptionLimit,
 		Robots:                []loxoneExportRobot{},
 		TemplateStatus:        templates.StatusForCurrentBuild(),
+		HealthInputs:          integration.HealthInputs,
 	}
 	seen := make(map[string]bool)
 	for _, selection := range request.Robots {
@@ -588,6 +594,20 @@ func (ws *WebServer) directExportPlan(robot loxoneRobotResponse, rooms []loxoneR
 	return inputs, outputs
 }
 
+func directHealthInputPlan() []loxoneDirectInput {
+	mapping := loxonedirect.InputMapping{Prefix: config.Get().Loxone.Direct.InputPrefix, Overrides: config.Get().Loxone.Direct.Inputs}
+	values := []loxonedirect.StateValue{
+		loxonedirect.InstallationValue("bridge_alive", loxonedirect.Digital, "1", mapping),
+		loxonedirect.InstallationValue("cloud_connected", loxonedirect.Digital, "0", mapping),
+		loxonedirect.InstallationValue("bridge_heartbeat", loxonedirect.Analog, "0", mapping),
+	}
+	inputs := make([]loxoneDirectInput, 0, len(values))
+	for _, value := range values {
+		inputs = append(inputs, loxoneDirectInput{Name: value.Input, Field: value.Field, Kind: string(value.Kind)})
+	}
+	return inputs
+}
+
 func createLoxoneExportZIP(pack loxoneExportPack) ([]byte, error) {
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
@@ -633,6 +653,9 @@ func loxoneDirectInputsCSV(pack loxoneExportPack) []byte {
 	var buffer bytes.Buffer
 	writer := csv.NewWriter(&buffer)
 	_ = writer.Write([]string{"Robot", "Virtual Input", "Field", "Type"})
+	for _, input := range pack.HealthInputs {
+		_ = writer.Write([]string{"Installation", safeCSV(input.Name), input.Field, input.Kind})
+	}
 	for _, robot := range pack.Robots {
 		for _, input := range robot.DirectInputs {
 			_ = writer.Write([]string{safeCSV(robot.Name), safeCSV(input.Name), input.Field, input.Kind})
@@ -724,7 +747,7 @@ func loxoneSetupMarkdown(pack loxoneExportPack) string {
 	}
 	builder.WriteString(fmt.Sprintf("The selected MQTT configuration uses **%d subscriptions** (%d per MQTT-enabled robot). The documented Loxone limit is %d. Direct HTTP uses no MQTT subscriptions.\n\n", pack.SubscriptionsRequired, pack.SubscriptionsPerRobot, pack.SubscriptionLimit))
 	builder.WriteString("## MQTT setup\n\nFor MQTT-enabled robots, add the two Subscribe objects and one non-retained Publish object from `topics.csv`, then use `command-recognition.csv`. Broker credentials are never included.\n\n")
-	builder.WriteString("## Direct HTTP setup\n\nCreate Virtual Inputs from `direct-inputs.csv`. Create authenticated HTTP POST Virtual Outputs from `direct-outputs.csv`, prefixing each relative path with the bridge address. Enter the dedicated command API credentials manually in Loxone Config.\n\n")
+	builder.WriteString("## Direct HTTP setup\n\nCreate Virtual Inputs from `direct-inputs.csv`. The installation-level `bridge_alive`, `cloud_connected`, and `bridge_heartbeat` inputs are created once; `robot_online` is created per robot. Configure a 90-second timeout from the heartbeat: an absent heartbeat is the only reliable Direct HTTP signal after the bridge, NAS, or network has stopped. Create authenticated HTTP POST Virtual Outputs from `direct-outputs.csv`, prefixing each relative path with the bridge address. Enter the dedicated command API credentials manually in Loxone Config.\n\n")
 	builder.WriteString("## Native template status\n\nNo XML is generated. See `TEMPLATE-SAMPLES-NEEDED.md`; native generation stays locked until real exports from the target Loxone Config version pass fixture and round-trip validation.\n\n")
 	for _, robot := range pack.Robots {
 		builder.WriteString("## " + robot.Name + " (`" + robot.Slug + "`)\n\n")

@@ -9,7 +9,7 @@ import (
 
 func TestValuesForStateUsesCorrectLoxoneTypesAndUnits(t *testing.T) {
 	state := roborock.InternalDeviceState{
-		Slug: "salon", Online: true, UpdatedAt: time.Unix(1700000000, 0),
+		Slug: "salon", Online: true, RobotOnline: true, UpdatedAt: time.Unix(1700000000, 0),
 		CurrentRoom: &roborock.CurrentRoom{ID: 23, Name: "Cuisine"},
 		Status: &roborock.PublishedStatus{
 			State: "washing_mop", Battery: 82, ErrorCode: 7, Error: "Blocked",
@@ -26,7 +26,7 @@ func TestValuesForStateUsesCorrectLoxoneTypesAndUnits(t *testing.T) {
 		value string
 		kind  ValueKind
 	}{
-		"online": {"1", Digital}, "battery": {"82", Analog},
+		"online": {"1", Digital}, "robot_online": {"1", Digital}, "battery": {"82", Analog},
 		"state": {"14", Analog}, "state_text": {"washing_mop", Text},
 		"current_room_name": {"Cuisine", Text}, "clean_area": {"12.50", Analog},
 		"clean_time_seconds": {"321", Analog}, "last_seen": {"1700000000", Analog},
@@ -38,6 +38,17 @@ func TestValuesForStateUsesCorrectLoxoneTypesAndUnits(t *testing.T) {
 	}
 	if byField["battery"].Input != "RR_salon_battery" {
 		t.Fatalf("unexpected default input: %s", byField["battery"].Input)
+	}
+}
+
+func TestInstallationValueUsesCompactBridgeInputNameAndOverride(t *testing.T) {
+	value := InstallationValue("bridge_heartbeat", Analog, "1700000000", InputMapping{Prefix: "RR"})
+	if value.Robot != "_bridge" || value.Input != "RR_bridge_heartbeat" || value.Value != "1700000000" {
+		t.Fatalf("unexpected installation value: %+v", value)
+	}
+	overridden := InstallationValue("bridge_alive", Digital, "1", InputMapping{Overrides: map[string]map[string]string{"_bridge": {"bridge_alive": "Bridge OK"}}})
+	if overridden.Input != "Bridge OK" {
+		t.Fatalf("installation override not applied: %+v", overridden)
 	}
 }
 

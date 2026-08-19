@@ -29,3 +29,13 @@ func TestSubscriptionsCanBeRebuiltWhileDisconnected(t *testing.T) {
 		t.Fatalf("subscriptions after clear = %d", got)
 	}
 }
+
+func TestClientOptionsConfigureRetainedBridgeLastWill(t *testing.T) {
+	client := New()
+	options := client.clientOptions(config.MQTTConfig{QoS: 1}, "tcp://broker:1883", &LastWill{
+		Topic: "loxone/roborock/_bridge/bridge_alive", OfflinePayload: "0", OnlinePayload: "1", Retained: true,
+	})
+	if !options.WillEnabled || options.WillTopic != "loxone/roborock/_bridge/bridge_alive" || string(options.WillPayload) != "0" || options.WillQos != 1 || !options.WillRetained {
+		t.Fatalf("unexpected MQTT Last Will options: %+v", options)
+	}
+}

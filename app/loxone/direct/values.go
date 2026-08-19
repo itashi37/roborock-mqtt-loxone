@@ -58,12 +58,17 @@ func ValuesForState(state roborock.InternalDeviceState, mapping InputMapping) []
 	if state.Online {
 		online = "1"
 	}
+	robotOnline := "0"
+	if state.RobotOnline {
+		robotOnline = "1"
+	}
 	values := []struct {
 		field string
 		kind  ValueKind
 		value string
 	}{
 		{"online", Digital, online},
+		{"robot_online", Digital, robotOnline},
 		{"battery", Analog, strconv.Itoa(battery)},
 		{"state", Analog, strconv.Itoa(DirectStateCode(stateText))},
 		{"state_text", Text, stateText},
@@ -102,6 +107,28 @@ func ValuesForState(state roborock.InternalDeviceState, mapping InputMapping) []
 		result = append(result, StateValue{Robot: state.Slug, Field: value.field, Input: inputName(state.Slug, value.field, mapping), Kind: value.kind, Value: value.value})
 	}
 	return result
+}
+
+// InstallationValue creates a bridge-wide Virtual Input value. These inputs
+// intentionally omit a robot slug so a multi-robot installation has one
+// heartbeat and one cloud/bridge health indicator.
+func InstallationValue(field string, kind ValueKind, value string, mapping InputMapping) StateValue {
+	return StateValue{Robot: "_bridge", Field: field, Input: installationInputName(field, mapping), Kind: kind, Value: value}
+}
+
+func installationInputName(field string, mapping InputMapping) string {
+	if bridge := mapping.Overrides["_bridge"]; bridge != nil {
+		if override := strings.TrimSpace(bridge[field]); override != "" {
+			return override
+		}
+	}
+	prefix := strings.TrimSpace(mapping.Prefix)
+	if prefix == "" {
+		prefix = "RR"
+	}
+	name := fmt.Sprintf("%s_%s", prefix, field)
+	name = invalidInputName.ReplaceAllString(name, "_")
+	return strings.Trim(name, "_")
 }
 
 func inputName(slug, field string, mapping InputMapping) string {

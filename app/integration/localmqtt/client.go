@@ -15,6 +15,15 @@ import (
 
 type MessageHandler func(topic string, payload []byte)
 
+// LastWill configures the bridge availability message published by the broker
+// when this client disappears without a clean MQTT disconnect.
+type LastWill struct {
+	Topic          string
+	OfflinePayload string
+	OnlinePayload  string
+	Retained       bool
+}
+
 type Diagnostics struct {
 	Enabled       bool      `json:"enabled"`
 	Connected     bool      `json:"connected"`
@@ -31,6 +40,7 @@ type Client struct {
 	config        config.MQTTConfig
 	subscriptions map[string]MessageHandler
 	diagnostics   Diagnostics
+	lastWill      *LastWill
 }
 
 func New() *Client {
@@ -38,12 +48,20 @@ func New() *Client {
 }
 
 func (c *Client) Start(cfg config.MQTTConfig) error {
+	return c.StartWithWill(cfg, nil)
+}
+
+// StartWithWill starts the client and configures an optional retained bridge
+// availability marker. Stop publishes the offline marker explicitly; an
+// ungraceful loss is handled by the broker-side Last Will.
+func (c *Client) StartWithWill(cfg config.MQTTConfig, lastWill *LastWill) error {
 	if strings.TrimSpace(cfg.URL) == "" {
 		return fmt.Errorf("local MQTT broker URL is required")
 	}
 	c.Stop()
 	c.mu.Lock()
 	c.config = cfg
+	c.lastWill = cloneLastWill(lastWill)
 	c.diagnostics.Enabled = true
 	c.diagnostics.LastAttempt = time.Now()
 	c.diagnostics.LastError = ""
@@ -53,22 +71,7 @@ func (c *Client) Start(cfg config.MQTTConfig) error {
 	if cfg.TLS && strings.HasPrefix(brokerURL, "tcp://") {
 		brokerURL = "ssl://" + strings.TrimPrefix(brokerURL, "tcp://")
 	}
-	options := paho.NewClientOptions().
-		AddBroker(brokerURL).
-		SetClientID(fmt.Sprintf("roborock_mqtt_%08x", rand.Uint32())).
-		SetUsername(cfg.Username).
-		SetPassword(cfg.Password).
-		SetAutoReconnect(true).
-		SetConnectRetry(false).
-		SetKeepAlive(60 * time.Second).
-		SetTLSConfig(&tls.Config{MinVersion: tls.VersionTLS12})
-	options.SetOnConnectHandler(func(client paho.Client) { c.onConnect(client) })
-	options.SetConnectionLostHandler(func(_ paho.Client, err error) {
-		c.mu.Lock()
-		c.diagnostics.Connected = false
-		c.diagnostics.LastError = err.Error()
-		c.mu.Unlock()
-	})
+	options := c.clientOptions(cfg, brokerURL, lastWill)
 	client := paho.NewClient(options)
 	c.mu.Lock()
 	c.client = client
@@ -87,6 +90,29 @@ func (c *Client) Start(cfg config.MQTTConfig) error {
 	return nil
 }
 
+func (c *Client) clientOptions(cfg config.MQTTConfig, brokerURL string, lastWill *LastWill) *paho.ClientOptions {
+	options := paho.NewClientOptions().
+		AddBroker(brokerURL).
+		SetClientID(fmt.Sprintf("roborock_mqtt_%08x", rand.Uint32())).
+		SetUsername(cfg.Username).
+		SetPassword(cfg.Password).
+		SetAutoReconnect(true).
+		SetConnectRetry(false).
+		SetKeepAlive(60 * time.Second).
+		SetTLSConfig(&tls.Config{MinVersion: tls.VersionTLS12})
+	if lastWill != nil && strings.TrimSpace(lastWill.Topic) != "" {
+		options.SetWill(lastWill.Topic, lastWill.OfflinePayload, cfg.QoS, lastWill.Retained)
+	}
+	options.SetOnConnectHandler(func(client paho.Client) { c.onConnect(client) })
+	options.SetConnectionLostHandler(func(_ paho.Client, err error) {
+		c.mu.Lock()
+		c.diagnostics.Connected = false
+		c.diagnostics.LastError = err.Error()
+		c.mu.Unlock()
+	})
+	return options
+}
+
 func (c *Client) onConnect(client paho.Client) {
 	c.mu.Lock()
 	if !c.diagnostics.Connected && !c.diagnostics.ConnectedAt.IsZero() {
@@ -100,7 +126,11 @@ func (c *Client) onConnect(client paho.Client) {
 		subscriptions[topic] = handler
 	}
 	qos := c.config.QoS
+	lastWill := cloneLastWill(c.lastWill)
 	c.mu.Unlock()
+	if lastWill != nil && strings.TrimSpace(lastWill.Topic) != "" {
+		client.Publish(lastWill.Topic, qos, lastWill.Retained, lastWill.OnlinePayload).Wait()
+	}
 	for topic, handler := range subscriptions {
 		h := handler
 		client.Subscribe(topic, qos, func(_ paho.Client, message paho.Message) { h(message.Topic(), message.Payload()) })
@@ -110,13 +140,27 @@ func (c *Client) onConnect(client paho.Client) {
 func (c *Client) Stop() {
 	c.mu.Lock()
 	client := c.client
+	lastWill := cloneLastWill(c.lastWill)
+	qos := c.config.QoS
 	c.client = nil
+	c.lastWill = nil
 	c.diagnostics.Connected = false
 	c.diagnostics.Enabled = false
 	c.mu.Unlock()
 	if client != nil && client.IsConnected() {
+		if lastWill != nil && strings.TrimSpace(lastWill.Topic) != "" {
+			client.Publish(lastWill.Topic, qos, lastWill.Retained, lastWill.OfflinePayload).Wait()
+		}
 		client.Disconnect(500)
 	}
+}
+
+func cloneLastWill(value *LastWill) *LastWill {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 func (c *Client) ClearSubscriptions() {

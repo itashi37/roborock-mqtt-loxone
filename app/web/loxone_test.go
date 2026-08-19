@@ -124,17 +124,17 @@ func TestDirectExportPlanContainsNoCredentialsAndNoMQTTSubscriptions(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pack.SubscriptionsRequired != 0 || len(pack.Robots) != 1 || len(pack.Robots[0].DirectInputs) < 15 || len(pack.Robots[0].DirectOutputs) != 3 {
+	if pack.SubscriptionsRequired != 0 || len(pack.HealthInputs) != 3 || len(pack.Robots) != 1 || len(pack.Robots[0].DirectInputs) < 16 || len(pack.Robots[0].DirectOutputs) != 3 {
 		t.Fatalf("unexpected Direct plan: %+v", pack)
 	}
 	integration, err := server.buildLoxoneIntegration()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !integration.DirectTokenConfigured || integration.DirectAPIUsername != "loxone" || len(integration.Robots) != 1 {
+	if !integration.DirectTokenConfigured || integration.DirectAPIUsername != "loxone" || len(integration.HealthInputs) != 3 || len(integration.Robots) != 1 {
 		t.Fatalf("integration lacks sanitized Direct setup metadata: %+v", integration)
 	}
-	if len(integration.Robots[0].DirectInputs) < 15 || len(integration.Robots[0].DirectOutputs) != 3 {
+	if len(integration.Robots[0].DirectInputs) < 16 || len(integration.Robots[0].DirectOutputs) != 3 {
 		t.Fatalf("copy-ready Direct plan missing from integration UI response: %+v", integration.Robots[0])
 	}
 	serialized, _ := json.Marshal(pack)

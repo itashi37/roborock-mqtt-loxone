@@ -175,6 +175,7 @@ export interface LoxoneIntegration {
   direct_api_username?: string;
   direct_token_configured: boolean;
   direct_diagnostics?: DirectDiagnostics;
+  health_inputs?: LoxoneDirectInput[];
   robots: LoxoneRobot[];
   fleet?: FleetHealth;
   template_status: {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mqtt-home/roborock-mqtt/config"
+	bridgehealth "github.com/mqtt-home/roborock-mqtt/integration/health"
 	"github.com/mqtt-home/roborock-mqtt/integration/localmqtt"
 	loxonedirect "github.com/mqtt-home/roborock-mqtt/loxone/direct"
 	"github.com/mqtt-home/roborock-mqtt/roborock"
@@ -48,6 +49,7 @@ var (
 	localBroker           = localmqtt.New()
 	scheduleSignals       *roborock.SignalListener
 	integrationMu         sync.Mutex
+	healthPublisher       *bridgehealth.Publisher
 )
 
 func localMQTTEnabled() bool { return config.Get().MQTT.IsEnabled() }
@@ -163,6 +165,71 @@ func loxoneTopic(slug, suffix string) string {
 	return base + "/" + slug + "/" + suffix
 }
 
+func bridgeHealthSnapshot(now time.Time) bridgehealth.Snapshot {
+	snapshot := bridgehealth.Snapshot{BridgeAlive: true, RobotOnline: map[string]bool{}, Heartbeat: now.Unix()}
+	if deviceManager == nil {
+		return snapshot
+	}
+	snapshot.CloudConnected = deviceManager.ConnectedCount() > 0
+	for _, state := range deviceStateStore.All() {
+		snapshot.RobotOnline[state.Slug] = state.RobotOnline
+	}
+	return snapshot
+}
+
+func directInstallationHealthValues(snapshot bridgehealth.Snapshot) []loxonedirect.StateValue {
+	mapping := loxonedirect.InputMapping{Prefix: config.Get().Loxone.Direct.InputPrefix, Overrides: config.Get().Loxone.Direct.Inputs}
+	digital := func(value bool) string {
+		if value {
+			return "1"
+		}
+		return "0"
+	}
+	return []loxonedirect.StateValue{
+		loxonedirect.InstallationValue("bridge_alive", loxonedirect.Digital, digital(snapshot.BridgeAlive), mapping),
+		loxonedirect.InstallationValue("cloud_connected", loxonedirect.Digital, digital(snapshot.CloudConnected), mapping),
+		loxonedirect.InstallationValue("bridge_heartbeat", loxonedirect.Analog, strconv.FormatInt(snapshot.Heartbeat, 10), mapping),
+	}
+}
+
+func publishBridgeHealth(snapshot bridgehealth.Snapshot) {
+	if localMQTTEnabled() && config.Get().Loxone.Enabled {
+		alive := "0"
+		if snapshot.BridgeAlive {
+			alive = "1"
+		}
+		cloud := "0"
+		if snapshot.CloudConnected {
+			cloud = "1"
+		}
+		publishLocalMQTT(loxoneTopic("_bridge", "bridge_alive"), alive, true)
+		publishLocalMQTT(loxoneTopic("_bridge", "cloud_connected"), cloud, true)
+		publishLocalMQTT(loxoneTopic("_bridge", "bridge_heartbeat"), strconv.FormatInt(snapshot.Heartbeat, 10), false)
+		for slug, online := range snapshot.RobotOnline {
+			payload := "0"
+			if online {
+				payload = "1"
+			}
+			publishLoxoneScalar(slug, "robot_online", payload)
+		}
+	}
+	integrationMu.Lock()
+	defer integrationMu.Unlock()
+	if directSynchronizer != nil {
+		for _, value := range directInstallationHealthValues(snapshot) {
+			directSynchronizer.UpdateInstallation(value, false)
+		}
+	}
+}
+
+func startHealthPublisher() {
+	if healthPublisher != nil {
+		healthPublisher.Stop()
+	}
+	healthPublisher = bridgehealth.NewPublisher(bridgehealth.DefaultHeartbeatInterval, bridgeHealthSnapshot, publishBridgeHealth)
+	healthPublisher.Start()
+}
+
 func expectedRetainedTopics() []string {
 	if deviceManager == nil || !localMQTTEnabled() {
 		return nil
@@ -174,7 +241,9 @@ func expectedRetainedTopics() []string {
 		"online", "state", "battery", "current_room_id", "current_room_name", "clean_area", "clean_time_seconds",
 		"error_code", "error_text", "last_seen", "maintenance/main_brush", "maintenance/side_brush",
 		"maintenance/filter", "maintenance/sensor", "core", "last_command",
+		"robot_online",
 	}
+	bridgeSuffixes := []string{"bridge_alive", "cloud_connected"}
 	for _, device := range deviceManager.GetDevices() {
 		if !localMQTTEnabledFor(device.Slug) {
 			continue
@@ -187,6 +256,11 @@ func expectedRetainedTopics() []string {
 			for _, suffix := range loxoneSuffixes {
 				topics = append(topics, loxoneTopic(device.Slug, suffix))
 			}
+		}
+	}
+	if cfg.Loxone.Enabled {
+		for _, suffix := range bridgeSuffixes {
+			topics = append(topics, loxoneTopic("_bridge", suffix))
 		}
 	}
 	return topics
@@ -360,6 +434,9 @@ func configureDirectLoxone() {
 			return filtered
 		},
 	)
+	directSynchronizer.SetInstallationValues(func() []loxonedirect.StateValue {
+		return directInstallationHealthValues(bridgeHealthSnapshot(time.Now()))
+	})
 	directSynchronizer.ResendAll()
 }
 
@@ -434,7 +511,14 @@ func configureLocalMQTT(restClient *roborock.Client) error {
 	if !localMQTTEnabled() {
 		return nil
 	}
-	if err := localBroker.Start(config.Get().MQTT); err != nil {
+	cfg := config.Get()
+	var lastWill *localmqtt.LastWill
+	if cfg.Loxone.Enabled {
+		lastWill = &localmqtt.LastWill{
+			Topic: loxoneTopic("_bridge", "bridge_alive"), OfflinePayload: "0", OnlinePayload: "1", Retained: true,
+		}
+	}
+	if err := localBroker.StartWithWill(cfg.MQTT, lastWill); err != nil {
 		return err
 	}
 	_ = localBroker.Subscribe(loxoneTopic("_bridge", "diagnostic"), func(_ string, payload []byte) {
@@ -455,15 +539,20 @@ func configureLocalMQTT(restClient *roborock.Client) error {
 
 func applyRuntimeSettings(restClient *roborock.Client, settings config.RuntimeSettings) error {
 	integrationMu.Lock()
-	defer integrationMu.Unlock()
 	if err := config.SaveRuntimeSettings(settings); err != nil {
+		integrationMu.Unlock()
 		return err
 	}
 	restClient.SetUsername(settings.RoborockUsername)
 	configureDirectLoxone()
 	if err := configureLocalMQTT(restClient); err != nil {
+		integrationMu.Unlock()
 		logger.Warn("Local MQTT reconfiguration failed; Direct Loxone remains available", "error", err)
 		return fmt.Errorf("save succeeded but local MQTT connection failed: %w", err)
+	}
+	integrationMu.Unlock()
+	if healthPublisher != nil {
+		healthPublisher.PublishNow()
 	}
 	return nil
 }
@@ -821,6 +910,10 @@ func startBridge(restClient *roborock.Client) {
 			if len(state.Scenes) > 0 {
 				publishDeviceScenes(state.Slug, state.Scenes)
 			}
+		case roborock.DeviceStateHealth:
+			if healthPublisher != nil {
+				healthPublisher.PublishNow()
+			}
 		}
 	})
 	deviceManager.SetStatusCallback(func(slug string, status *roborock.PublishedStatus) {
@@ -865,6 +958,7 @@ func startBridge(restClient *roborock.Client) {
 		deviceStateStore.UpdateAvailability(md.Slug, false, time.Now())
 		deviceStateStore.UpdateCurrentRoom(md.Slug, nil, time.Now())
 	}
+	startHealthPublisher()
 
 	// Load cached maps from disk (available before first poll)
 	deviceManager.LoadMapCaches()
@@ -1040,6 +1134,9 @@ func main() {
 	}
 	if deviceManager != nil {
 		deviceManager.DisconnectAll()
+	}
+	if healthPublisher != nil {
+		healthPublisher.Stop()
 	}
 	if directSynchronizer != nil {
 		directSynchronizer.Close()

@@ -52,7 +52,7 @@ func TestSynchronizerSendsChangesOnlyAndSupportsFullResync(t *testing.T) {
 	defer synchronizer.Close()
 
 	synchronizer.Update(state)
-	waitForCalls(t, pusher, 15)
+	waitForCalls(t, pusher, 16)
 	initial := pusher.count()
 	synchronizer.Update(state)
 	time.Sleep(30 * time.Millisecond)
@@ -67,7 +67,18 @@ func TestSynchronizerSendsChangesOnlyAndSupportsFullResync(t *testing.T) {
 	waitForCalls(t, pusher, initial+2) // battery and last_seen
 	changed := pusher.count()
 	synchronizer.ResendAll()
-	waitForCalls(t, pusher, changed+15)
+	waitForCalls(t, pusher, changed+16)
+}
+
+func TestSynchronizerResendsInstallationHealth(t *testing.T) {
+	pusher := &recordingPusher{}
+	synchronizer := NewSynchronizer(pusher, InputMapping{Prefix: "RR"}, 0, time.Millisecond, nil)
+	defer synchronizer.Close()
+	synchronizer.SetInstallationValues(func() []StateValue {
+		return []StateValue{InstallationValue("bridge_alive", Digital, "1", InputMapping{Prefix: "RR"})}
+	})
+	synchronizer.ResendAll()
+	waitForCalls(t, pusher, 1)
 }
 
 func TestSynchronizerRetriesAndRecordsDiagnostics(t *testing.T) {
@@ -75,7 +86,7 @@ func TestSynchronizerRetriesAndRecordsDiagnostics(t *testing.T) {
 	synchronizer := NewSynchronizer(pusher, InputMapping{Prefix: "RR"}, 2, time.Millisecond, nil)
 	defer synchronizer.Close()
 	synchronizer.Update(roborock.InternalDeviceState{Slug: "robot", UpdatedAt: time.Unix(1, 0)})
-	waitForCalls(t, pusher, 16)
+	waitForCalls(t, pusher, 17)
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		diagnostics := synchronizer.Diagnostics()

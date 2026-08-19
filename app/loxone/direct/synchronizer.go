@@ -35,11 +35,12 @@ type queuedValue struct {
 }
 
 type Synchronizer struct {
-	client     ValuePusher
-	mapping    InputMapping
-	maxRetries int
-	retryDelay time.Duration
-	stateAll   func() []roborock.InternalDeviceState
+	client          ValuePusher
+	mapping         InputMapping
+	maxRetries      int
+	retryDelay      time.Duration
+	stateAll        func() []roborock.InternalDeviceState
+	installationAll func() []StateValue
 
 	mu           sync.Mutex
 	pending      map[string]queuedValue
@@ -72,12 +73,31 @@ func (s *Synchronizer) Update(state roborock.InternalDeviceState) {
 }
 
 func (s *Synchronizer) ResendAll() {
-	if s.stateAll == nil {
-		return
+	if s.stateAll != nil {
+		for _, state := range s.stateAll() {
+			s.enqueueState(state, true)
+		}
 	}
-	for _, state := range s.stateAll() {
-		s.enqueueState(state, true)
+	s.mu.Lock()
+	installationAll := s.installationAll
+	s.mu.Unlock()
+	if installationAll != nil {
+		for _, value := range installationAll() {
+			s.enqueue(queuedValue{value: value, force: true})
+		}
 	}
+}
+
+// SetInstallationValues registers the bridge-wide health values included in a
+// full resynchronization after reconnect or an explicit resend request.
+func (s *Synchronizer) SetInstallationValues(values func() []StateValue) {
+	s.mu.Lock()
+	s.installationAll = values
+	s.mu.Unlock()
+}
+
+func (s *Synchronizer) UpdateInstallation(value StateValue, force bool) {
+	s.enqueue(queuedValue{value: value, force: force})
 }
 
 func (s *Synchronizer) Close() {

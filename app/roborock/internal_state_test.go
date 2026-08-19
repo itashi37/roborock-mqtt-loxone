@@ -26,3 +26,28 @@ func TestDeviceStateStorePublishesTransportIndependentSnapshots(t *testing.T) {
 		t.Fatalf("unexpected updates: %+v", updates)
 	}
 }
+
+func TestDeviceStateStoreSeparatesCloudAvailabilityFromRobotResponse(t *testing.T) {
+	store := NewDeviceStateStore()
+	now := time.Unix(20, 0)
+	device := &ManagedDevice{Info: DeviceInfo{DID: "did-a", Name: "Robot"}, Slug: "robot"}
+	capabilities := InitialDeviceCapabilities(now)
+	store.Seed(device, capabilities, now)
+	store.UpdateAvailability("robot", true, now)
+	store.UpdateHealth("robot", DeviceHealth{Online: true}, now)
+	state, _ := store.Get("robot")
+	if state.RobotOnline {
+		t.Fatal("cloud connection without a robot status must not report robot_online")
+	}
+	store.UpdateStatus("robot", &PublishedStatus{State: "idle"}, capabilities, now)
+	store.UpdateHealth("robot", DeviceHealth{Online: true}, now)
+	state, _ = store.Get("robot")
+	if !state.RobotOnline {
+		t.Fatal("a responding robot should report robot_online")
+	}
+	store.UpdateHealth("robot", DeviceHealth{Online: true, ConsecutiveFailures: 3}, now)
+	state, _ = store.Get("robot")
+	if state.RobotOnline {
+		t.Fatal("repeated polling failures must clear robot_online")
+	}
+}
