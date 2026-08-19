@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"github.com/mqtt-home/roborock-mqtt/config"
 	bridgehealth "github.com/mqtt-home/roborock-mqtt/integration/health"
 	"github.com/mqtt-home/roborock-mqtt/integration/localmqtt"
+	"github.com/mqtt-home/roborock-mqtt/integration/updates"
 	"github.com/mqtt-home/roborock-mqtt/integration/watchdog"
 	loxonedirect "github.com/mqtt-home/roborock-mqtt/loxone/direct"
 	"github.com/mqtt-home/roborock-mqtt/roborock"
@@ -56,7 +58,63 @@ var (
 	watchdogExit          = make(chan string, 1)
 	watchdogRecovery      atomic.Bool
 	processStartedAt      = time.Now()
+	updateChecker         = updates.NewChecker(version.Version, version.GitCommit)
 )
+
+func installedChannel() string {
+	value := strings.ToLower(strings.TrimSpace(version.Version))
+	if value == "dev" || value == "edge" || strings.Contains(value, "edge") || strings.Contains(value, "dirty") {
+		return "edge"
+	}
+	return "stable"
+}
+
+func dataVolumeStatus() web.DataVolumeStatus {
+	status := web.DataVolumeStatus{Path: dataDir}
+	temporary, err := os.CreateTemp(dataDir, ".health-*")
+	if err != nil {
+		status.Error = err.Error()
+		return status
+	}
+	name := temporary.Name()
+	if closeErr := temporary.Close(); closeErr != nil {
+		status.Error = closeErr.Error()
+		return status
+	}
+	if removeErr := os.Remove(name); removeErr != nil {
+		status.Error = removeErr.Error()
+		return status
+	}
+	status.Writable = true
+	var filesystem syscall.Statfs_t
+	if err := syscall.Statfs(dataDir, &filesystem); err != nil {
+		status.Error = err.Error()
+		return status
+	}
+	status.FreeBytes = uint64(filesystem.Bavail) * uint64(filesystem.Bsize)
+	return status
+}
+
+func systemStatusSnapshot() web.SystemStatus {
+	now := time.Now()
+	health := watchdog.Assess(watchdog.Observation{ObservedAt: now, StartedAt: processStartedAt}, watchdogConfig(config.Get().Watchdog))
+	if watchdogMonitor != nil {
+		health = watchdogMonitor.Report()
+	}
+	mqttDiagnostics := localBroker.Diagnostics()
+	directDiagnostics := directDiagnosticsSnapshot()
+	return web.SystemStatus{
+		Product: "roborock-mqtt-loxone", Version: version.Version, GitCommit: version.GitCommit,
+		BuildTime: version.BuildTime, GoVersion: version.GoVersion, Architecture: runtime.GOOS + "/" + runtime.GOARCH,
+		Channel: installedChannel(), UptimeSeconds: int64(now.Sub(processStartedAt).Seconds()),
+		StartedAt: processStartedAt, LastRestart: processStartedAt, LastWatchdogReason: health.LastWatchdogReason,
+		Health: health, DataVolume: dataVolumeStatus(), Update: updateChecker.Last(),
+		Transports: map[string]web.SystemTransportStatus{
+			"mqtt":   {Enabled: localMQTTEnabled(), Connected: mqttDiagnostics.Connected, LastSuccess: mqttDiagnostics.ConnectedAt, LastError: mqttDiagnostics.LastError},
+			"direct": {Enabled: config.Get().Loxone.Direct.Enabled, Connected: !directDiagnostics.LastTransmission.IsZero() && directDiagnostics.LastError == "", LastSuccess: directDiagnostics.LastTransmission, LastError: directDiagnostics.LastError},
+		},
+	}
+}
 
 func watchdogConfig(cfg config.WatchdogConfig) watchdog.Config {
 	return watchdog.Config{
@@ -1190,6 +1248,12 @@ func main() {
 			return watchdog.Assess(watchdogObservation(restClient, time.Now()), watchdogConfig(config.Get().Watchdog))
 		}
 		return watchdogMonitor.Report()
+	})
+	webServer.SetSystemIntegration(&web.SystemDependencies{
+		Status: systemStatusSnapshot,
+		CheckUpdates: func(ctx context.Context, channel string) (updates.Info, error) {
+			return updateChecker.Check(ctx, channel)
+		},
 	})
 
 	// Wire schedule engine to web server if bridge already started

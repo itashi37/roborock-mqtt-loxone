@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Routes, Route, Navigate, useParams, useNavigate, Link } from 'react-router-dom';
-import { Battery, Sun, Moon, Wifi, WifiOff, Play, Pause, Home, Wind, Droplets, AlertCircle, Clock, MapPin, LogOut, ChevronRight, Wrench, Network } from 'lucide-react';
+import { Battery, Sun, Moon, Wifi, WifiOff, Play, Pause, Home, Wind, Droplets, AlertCircle, Clock, MapPin, LogOut, ChevronRight, Wrench, Network, ServerCog } from 'lucide-react';
 import { useSSE } from '@/hooks/useSSE';
 import { pauseCleaning, dockVacuum, getAuthStatus, logout, fetchDevices, fetchScenes, executeScene, setNotAtHome, fetchSetupStatus } from '@/lib/api';
 import type { SceneInfo } from '@/lib/api';
@@ -18,6 +18,7 @@ import { MaintenancePage } from '@/components/MaintenancePage';
 import { SchedulePage } from '@/components/SchedulePage';
 import { LoxoneIntegrationPage } from '@/components/LoxoneIntegrationPage';
 import { SetupWizard } from '@/components/SetupWizard';
+import { SystemUpdatesPage } from '@/components/SystemUpdatesPage';
 
 const activeCleaningStates = new Set([
   'cleaning', 'spot_cleaning', 'segment_cleaning', 'zoned_cleaning',
@@ -107,6 +108,7 @@ export function App() {
       <Routes>
         <Route path="/setup" element={<SetupWizard reconfigure onComplete={() => { setSetupComplete(true); window.location.assign('/loxone'); }} />} />
         <Route path="/loxone" element={<LoxoneIntegrationPage liveActivities={loxoneActivities} liveStatuses={statuses} liveAvailabilities={availabilities} streamConnected={isConnected} />} />
+        <Route path="/system" element={<SystemUpdatesPage returnSlug={devices[0]?.slug} />} />
         <Route path="/devices/:slug/*" element={
           <DeviceLayout
             devices={liveDevices}
@@ -237,6 +239,9 @@ function DeviceLayout({ devices, statuses, globalNotAtHome, setGlobalNotAtHome, 
             </button>
             <Link to="/setup" className="p-2 rounded-lg hover:bg-accent transition-colors" aria-label="Integration settings" title="Integration settings">
               <Network className="h-5 w-5 text-foreground" />
+            </Link>
+            <Link to="/system" className="p-2 rounded-lg hover:bg-accent transition-colors" aria-label="System and updates" title="System & Updates">
+              <ServerCog className="h-5 w-5 text-foreground" />
             </Link>
             <button onClick={onLogout} className="p-2 rounded-lg hover:bg-accent transition-colors" aria-label="Logout" title="Logout">
               <LogOut className="h-5 w-5 text-foreground" />
@@ -437,6 +442,12 @@ function DeviceHome({ devices, statuses, scheduleStates, scenesBySlug, activeSce
         <Link to="/loxone" className="block w-full p-4 bg-card rounded-lg border border-border hover:bg-accent transition-colors text-left">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3 text-sm"><Network className="h-4 w-4 text-primary" /><span>Loxone Integration</span></div>
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          </div>
+        </Link>
+        <Link to="/system" className="mt-2 block w-full p-4 bg-card rounded-lg border border-border hover:bg-accent transition-colors text-left">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 text-sm"><ServerCog className="h-4 w-4 text-primary" /><span>System & Updates</span></div>
             <ChevronRight className="h-4 w-4 text-muted-foreground" />
           </div>
         </Link>

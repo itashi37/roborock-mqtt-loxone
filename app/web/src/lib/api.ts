@@ -1,7 +1,23 @@
 import type { DeviceSummary } from '@/types/status';
 import type { AdvancedDiagnosticsResponse, LoxoneExportSelection, LoxoneIntegration, LoxoneMQTTTest, LoxoneRoom } from '@/types/loxone';
+import type { SystemStatus, UpdateInfo } from '@/types/system';
 
 export const API_BASE = import.meta.env.DEV ? 'http://localhost:8080/api' : '/api';
+
+export async function fetchSystemStatus(): Promise<SystemStatus> {
+  const response = await fetch(`${API_BASE}/system/status`, { cache: 'no-store' });
+  if (!response.ok) throw new Error('Failed to load system status');
+  return response.json();
+}
+
+export async function checkForUpdates(channel: 'stable' | 'edge'): Promise<UpdateInfo> {
+  const response = await fetch(`${API_BASE}/system/updates/check`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channel }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Update check failed');
+  return data;
+}
 
 export interface AuthStatus {
   authenticated: boolean;

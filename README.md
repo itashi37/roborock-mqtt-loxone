@@ -43,6 +43,15 @@ Stable SemVer releases also publish immutable `:v1.2.3`, minor `:1.2`, and
 major `:1` aliases. Every manifest contains both `linux/amd64` and
 `linux/arm64`; `:edge` is never promoted to `:latest`.
 
+### System & Updates
+
+Open `/system` to inspect the installed version and commit, architecture,
+uptime, data-volume writability/free space, watchdog state, and sanitized MQTT
+and Direct Loxone transport diagnostics. **Check for updates** reads public
+GitHub release metadata for Stable or the latest `main` commit for Beta/Edge.
+It does not require or expose a GitHub/Registry credential. In this phase the
+page is discovery-only and deliberately has no Docker access.
+
 ```bash
 git clone https://github.com/itashi37/roborock-mqtt-loxone.git
 cd roborock-mqtt-loxone
@@ -669,6 +678,8 @@ make docker
 | `GET` | `/api/health` | Complete internal health report |
 | `GET` | `/api/live` | Process liveness probe used by Docker |
 | `GET` | `/api/ready` | Dependency readiness probe |
+| `GET` | `/api/system/status` | Sanitized runtime, volume, transport and version status |
+| `POST` | `/api/system/updates/check` | Read-only Stable/Edge update metadata check |
 | `GET` | `/api/fleet/health` | Fleet health, latency and polling backoff |
 | `GET` | `/api/setup/status` | Sanitized setup/integration status |
 | `PUT` | `/api/setup/settings` | Persist and live-apply integration settings |

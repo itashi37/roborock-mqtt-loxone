@@ -35,6 +35,8 @@ type WebServer struct {
 	loxoneMu       sync.RWMutex
 	settings       *IntegrationSettingsDependencies
 	settingsMu     sync.RWMutex
+	system         *SystemDependencies
+	systemMu       sync.RWMutex
 	onAuth         func()
 	router         *chi.Mux
 	sseClients     map[string]*SSEClient
@@ -120,6 +122,8 @@ func (ws *WebServer) setupRoutes() {
 		r.Get("/live", ws.liveness)
 		r.Get("/livez", ws.liveness) // backwards-compatible alias
 		r.Get("/ready", ws.readiness)
+		r.Get("/system/status", ws.systemStatus)
+		r.Post("/system/updates/check", ws.systemCheckUpdates)
 		r.Get("/fleet/health", ws.fleetHealth)
 		r.Get("/loxone/templates/status", ws.loxoneTemplateStatus)
 		r.Get("/setup/status", ws.setupStatus)
