@@ -17,6 +17,9 @@ type Info struct {
 	Channel        string    `json:"channel"`
 	CurrentVersion string    `json:"current_version"`
 	LatestVersion  string    `json:"latest_version,omitempty"`
+	LatestCommit   string    `json:"latest_commit,omitempty"`
+	ArtifactReady  bool      `json:"artifact_ready"`
+	ArtifactStatus string    `json:"artifact_status,omitempty"`
 	PublishedAt    time.Time `json:"published_at,omitempty"`
 	ReleaseNotes   string    `json:"release_notes,omitempty"`
 	ReleaseURL     string    `json:"release_url,omitempty"`
@@ -95,6 +98,9 @@ func (c *Checker) checkStable(ctx context.Context, info *Info) error {
 	info.PublishedAt, info.ReleaseURL = release.PublishedAt, release.HTMLURL
 	info.ReleaseNotes = limitText(release.Body, 20000)
 	info.Available = compareSemVer(info.LatestVersion, strings.TrimPrefix(c.currentVersion, "v")) > 0
+	// Stable releases are created only after the corresponding image has been
+	// published by the release workflow.
+	info.ArtifactReady, info.ArtifactStatus = true, "published"
 	return nil
 }
 
@@ -117,9 +123,39 @@ func (c *Checker) checkEdge(ctx context.Context, info *Info) error {
 		short = short[:12]
 	}
 	info.LatestVersion = "edge-" + short
+	info.LatestCommit = commit.SHA
 	info.PublishedAt, info.ReleaseURL = commit.Commit.Committer.Date, commit.HTMLURL
 	info.ReleaseNotes = limitText(commit.Commit.Message, 20000)
 	info.Available = c.currentCommit == "" || c.currentCommit == "unknown" || !strings.HasPrefix(commit.SHA, c.currentCommit) && !strings.HasPrefix(c.currentCommit, commit.SHA)
+
+	var runs struct {
+		WorkflowRuns []struct {
+			HeadSHA    string `json:"head_sha"`
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+			HTMLURL    string `json:"html_url"`
+		} `json:"workflow_runs"`
+	}
+	endpoint := c.repositoryAPI + "/actions/workflows/publish.yml/runs?branch=main&event=push&per_page=20"
+	if err := c.getJSON(ctx, endpoint, &runs); err != nil {
+		return fmt.Errorf("verify latest edge image publication: %w", err)
+	}
+	info.ArtifactStatus = "not_found"
+	for _, run := range runs.WorkflowRuns {
+		if run.HeadSHA != commit.SHA {
+			continue
+		}
+		if run.HTMLURL != "" {
+			info.ReleaseURL = run.HTMLURL
+		}
+		if run.Status == "completed" {
+			info.ArtifactStatus = run.Conclusion
+			info.ArtifactReady = run.Conclusion == "success"
+		} else {
+			info.ArtifactStatus = run.Status
+		}
+		break
+	}
 	return nil
 }
 

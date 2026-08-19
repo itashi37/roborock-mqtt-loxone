@@ -24,6 +24,9 @@ export interface UpdateInfo {
   channel: 'stable' | 'edge' | string;
   current_version: string;
   latest_version?: string;
+  latest_commit?: string;
+  artifact_ready: boolean;
+  artifact_status?: string;
   published_at?: string;
   release_notes?: string;
   release_url?: string;
@@ -85,6 +88,7 @@ export interface UpdateOperation {
   stage: UpdateStage;
   tag?: string;
   expected_version?: string;
+  expected_commit?: string;
   previous_image?: string;
   target_image?: string;
   backup_path?: string;

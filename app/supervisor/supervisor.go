@@ -27,7 +27,7 @@ type UpdateSupervisor interface {
 	Prepare(context.Context, string, string) (Replacement, error)
 	Activate(context.Context, *Replacement) error
 	WaitHealthy(context.Context, string, time.Duration) error
-	VerifyVersion(context.Context, string, string) error
+	VerifyVersion(context.Context, string, string, string) error
 	Rollback(context.Context, Replacement) error
 	Finalize(context.Context, Replacement) error
 }

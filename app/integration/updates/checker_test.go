@@ -14,6 +14,8 @@ func TestCheckerStableAndEdge(t *testing.T) {
 			_, _ = w.Write([]byte(`{"tag_name":"v1.2.3","published_at":"2026-08-19T08:00:00Z","body":"Fixes","html_url":"https://example/release"}`))
 		case "/commits/main":
 			_, _ = w.Write([]byte(`{"sha":"abcdef1234567890","html_url":"https://example/commit","commit":{"message":"Edge changes","committer":{"date":"2026-08-19T09:00:00Z"}}}`))
+		case "/actions/workflows/publish.yml/runs":
+			_, _ = w.Write([]byte(`{"workflow_runs":[{"head_sha":"abcdef1234567890","status":"completed","conclusion":"success","html_url":"https://example/run"}]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -27,8 +29,29 @@ func TestCheckerStableAndEdge(t *testing.T) {
 		t.Fatalf("stable=%+v err=%v", stable, err)
 	}
 	edge, err := checker.Check(context.Background(), "edge")
-	if err != nil || !edge.Available || edge.LatestVersion != "edge-abcdef123456" {
+	if err != nil || !edge.Available || edge.LatestVersion != "edge-abcdef123456" || !edge.ArtifactReady || edge.LatestCommit != "abcdef1234567890" {
 		t.Fatalf("edge=%+v err=%v", edge, err)
+	}
+}
+
+func TestCheckerEdgeWaitsForMatchingImageWorkflow(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/commits/main":
+			_, _ = w.Write([]byte(`{"sha":"newcommit1234567890","commit":{"message":"Pending","committer":{"date":"2026-08-19T09:00:00Z"}}}`))
+		case "/actions/workflows/publish.yml/runs":
+			_, _ = w.Write([]byte(`{"workflow_runs":[{"head_sha":"oldcommit1234567890","status":"completed","conclusion":"success"},{"head_sha":"newcommit1234567890","status":"in_progress","conclusion":""}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	checker := NewChecker("edge", "oldcommit")
+	checker.SetHTTPClient(server.Client(), server.URL)
+	info, err := checker.Check(context.Background(), "edge")
+	if err != nil || !info.Available || info.ArtifactReady || info.ArtifactStatus != "in_progress" {
+		t.Fatalf("info=%+v err=%v", info, err)
 	}
 }
 

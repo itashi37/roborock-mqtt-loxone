@@ -14,16 +14,18 @@ import (
 )
 
 type fakeEngine struct {
-	mu            sync.Mutex
-	pullError     error
-	replaceError  error
-	healthError   error
-	versionError  error
-	rollbackError error
-	prepared      int
-	activated     int
-	rolledBack    int
-	finalized     int
+	mu              sync.Mutex
+	pullError       error
+	replaceError    error
+	healthError     error
+	versionError    error
+	rollbackError   error
+	prepared        int
+	activated       int
+	rolledBack      int
+	finalized       int
+	verifiedVersion string
+	verifiedCommit  string
 }
 
 func (f *fakeEngine) CurrentArtifact(context.Context, string) (string, error) {
@@ -46,7 +48,10 @@ func (f *fakeEngine) Activate(_ context.Context, replacement *supervisor.Replace
 	return f.replaceError
 }
 func (f *fakeEngine) WaitHealthy(context.Context, string, time.Duration) error { return f.healthError }
-func (f *fakeEngine) VerifyVersion(context.Context, string, string) error      { return f.versionError }
+func (f *fakeEngine) VerifyVersion(_ context.Context, _ string, version, commit string) error {
+	f.verifiedVersion, f.verifiedCommit = version, commit
+	return f.versionError
+}
 func (f *fakeEngine) Rollback(context.Context, supervisor.Replacement) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -100,6 +105,25 @@ func TestSuccessfulUpdate(t *testing.T) {
 	}
 }
 
+func TestEdgeUpdateRequiresAndVerifiesExpectedCommit(t *testing.T) {
+	service := testService(t, &fakeEngine{}, 1000, nil)
+	if _, err := service.Start(Request{RequestID: "edge-no-commit", Tag: "edge", ExpectedVersion: "edge"}); err == nil {
+		t.Fatal("edge update without an expected commit was accepted")
+	}
+	engine := &fakeEngine{}
+	service = testService(t, engine, 1000, nil)
+	if _, err := service.Start(Request{RequestID: "edge-with-commit", Tag: "edge", ExpectedVersion: "edge", ExpectedCommit: "abcdef123456"}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for !terminal(service.Status().Stage) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if service.Status().Stage != StageSuccess || engine.verifiedCommit != "abcdef123456" || engine.verifiedVersion != "edge" {
+		t.Fatalf("operation=%+v version=%q commit=%q", service.Status(), engine.verifiedVersion, engine.verifiedCommit)
+	}
+}
+
 func TestUnhealthyUpdateRollsBack(t *testing.T) {
 	engine := &fakeEngine{healthError: errors.New("unhealthy")}
 	operation := startAndWait(t, testService(t, engine, 1000, nil))
@@ -111,7 +135,7 @@ func TestUnhealthyUpdateRollsBack(t *testing.T) {
 func TestVersionMismatchRollsBack(t *testing.T) {
 	engine := &fakeEngine{versionError: errors.New("wrong version")}
 	operation := startAndWait(t, testService(t, engine, 1000, nil))
-	if operation.Stage != StageFailed || engine.rolledBack != 1 || !strings.Contains(operation.Error, "version mismatch") {
+	if operation.Stage != StageFailed || engine.rolledBack != 1 || !strings.Contains(operation.Error, "artifact mismatch") {
 		t.Fatalf("operation=%+v rollback=%d", operation, engine.rolledBack)
 	}
 }

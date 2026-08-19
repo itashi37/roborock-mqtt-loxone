@@ -149,15 +149,20 @@ func startManualUpdate(ctx context.Context, channel string) (updater.Operation, 
 	if !info.Available || info.LatestVersion == "" {
 		return updater.Operation{}, fmt.Errorf("no update is available on the %s channel", channel)
 	}
+	if !info.ArtifactReady {
+		return updater.Operation{}, fmt.Errorf("the %s update image is not published yet (status: %s)", channel, info.ArtifactStatus)
+	}
 	tag, expected := "edge", "edge"
+	expectedCommit := info.LatestCommit
 	if channel != "edge" {
 		tag, expected = "v"+strings.TrimPrefix(info.LatestVersion, "v"), strings.TrimPrefix(info.LatestVersion, "v")
+		expectedCommit = ""
 	}
 	requestIDBytes := make([]byte, 16)
 	if _, err := rand.Read(requestIDBytes); err != nil {
 		return updater.Operation{}, fmt.Errorf("generate update request ID: %w", err)
 	}
-	return updaterClient.Start(ctx, updater.Request{RequestID: fmt.Sprintf("web-%x", requestIDBytes), Tag: tag, ExpectedVersion: expected})
+	return updaterClient.Start(ctx, updater.Request{RequestID: fmt.Sprintf("web-%x", requestIDBytes), Tag: tag, ExpectedVersion: expected, ExpectedCommit: expectedCommit})
 }
 
 func installedChannel() string {

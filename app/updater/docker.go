@@ -157,7 +157,7 @@ func (d *DockerEngine) WaitHealthy(ctx context.Context, container string, timeou
 	return fmt.Errorf("healthcheck timed out after %s", timeout)
 }
 
-func (d *DockerEngine) VerifyVersion(ctx context.Context, endpoint, expected string) error {
+func (d *DockerEngine) VerifyVersion(ctx context.Context, endpoint, expectedVersion, expectedCommit string) error {
 	if endpoint == "" {
 		return fmt.Errorf("bridge status URL is missing")
 	}
@@ -174,13 +174,21 @@ func (d *DockerEngine) VerifyVersion(ctx context.Context, endpoint, expected str
 		return fmt.Errorf("bridge status returned HTTP %d", response.StatusCode)
 	}
 	var status struct {
-		Version string `json:"version"`
+		Version   string `json:"version"`
+		GitCommit string `json:"git_commit"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&status); err != nil {
 		return err
 	}
-	if strings.TrimPrefix(status.Version, "v") != strings.TrimPrefix(expected, "v") {
-		return fmt.Errorf("got %q, expected %q", status.Version, expected)
+	if strings.TrimPrefix(status.Version, "v") != strings.TrimPrefix(expectedVersion, "v") {
+		return fmt.Errorf("got version %q, expected %q", status.Version, expectedVersion)
+	}
+	actualCommit := strings.ToLower(strings.TrimSpace(status.GitCommit))
+	expectedCommit = strings.ToLower(strings.TrimSpace(expectedCommit))
+	if expectedCommit != "" {
+		if actualCommit == "" || !strings.HasPrefix(actualCommit, expectedCommit) && !strings.HasPrefix(expectedCommit, actualCommit) {
+			return fmt.Errorf("got commit %q, expected %q", status.GitCommit, expectedCommit)
+		}
 	}
 	return nil
 }

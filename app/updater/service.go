@@ -20,6 +20,7 @@ const AllowedImage = "ghcr.io/itashi37/roborock-mqtt-loxone"
 
 var allowedTag = regexp.MustCompile(`^(edge|latest|v[0-9]+\.[0-9]+\.[0-9]+|[0-9]+|[0-9]+\.[0-9]+)$`)
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
+var commitPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
 
 type Stage string
 
@@ -40,6 +41,7 @@ type Operation struct {
 	Stage           Stage     `json:"stage"`
 	Tag             string    `json:"tag,omitempty"`
 	ExpectedVersion string    `json:"expected_version,omitempty"`
+	ExpectedCommit  string    `json:"expected_commit,omitempty"`
 	PreviousImage   string    `json:"previous_image,omitempty"`
 	TargetImage     string    `json:"target_image,omitempty"`
 	BackupPath      string    `json:"backup_path,omitempty"`
@@ -54,6 +56,7 @@ type Request struct {
 	RequestID       string `json:"request_id"`
 	Tag             string `json:"tag"`
 	ExpectedVersion string `json:"expected_version"`
+	ExpectedCommit  string `json:"expected_commit,omitempty"`
 }
 
 type Dependencies struct {
@@ -171,6 +174,7 @@ func (s *Service) Start(request Request) (Operation, error) {
 	request.RequestID = strings.TrimSpace(request.RequestID)
 	request.Tag = strings.TrimSpace(request.Tag)
 	request.ExpectedVersion = strings.TrimPrefix(strings.TrimSpace(request.ExpectedVersion), "v")
+	request.ExpectedCommit = strings.ToLower(strings.TrimSpace(request.ExpectedCommit))
 	if len(request.RequestID) < 8 || len(request.RequestID) > 64 || !requestIDPattern.MatchString(request.RequestID) {
 		return Operation{}, fmt.Errorf("invalid request_id")
 	}
@@ -179,6 +183,12 @@ func (s *Service) Start(request Request) (Operation, error) {
 	}
 	if request.ExpectedVersion == "" {
 		return Operation{}, fmt.Errorf("expected_version is required")
+	}
+	if request.ExpectedCommit != "" && !commitPattern.MatchString(request.ExpectedCommit) {
+		return Operation{}, fmt.Errorf("invalid expected_commit")
+	}
+	if request.Tag == "edge" && request.ExpectedCommit == "" {
+		return Operation{}, fmt.Errorf("expected_commit is required for edge updates")
 	}
 	s.mu.Lock()
 	if s.running {
@@ -197,7 +207,7 @@ func (s *Service) Start(request Request) (Operation, error) {
 		s.mu.Unlock()
 		return Operation{}, err
 	}
-	s.operation = Operation{ID: request.RequestID, Stage: StagePreparing, Tag: request.Tag, ExpectedVersion: request.ExpectedVersion, TargetImage: targetArtifact, StartedAt: now, UpdatedAt: now}
+	s.operation = Operation{ID: request.RequestID, Stage: StagePreparing, Tag: request.Tag, ExpectedVersion: request.ExpectedVersion, ExpectedCommit: request.ExpectedCommit, TargetImage: targetArtifact, StartedAt: now, UpdatedAt: now}
 	s.usedIDs = append(s.usedIDs, request.RequestID)
 	if len(s.usedIDs) > 50 {
 		delete(s.usedSet, s.usedIDs[0])
@@ -283,8 +293,8 @@ func (s *Service) run(operation Operation) {
 		fail(fmt.Errorf("new bridge is unhealthy: %w", err), true)
 		return
 	}
-	if err := s.dependencies.Supervisor.VerifyVersion(ctx, s.dependencies.HealthURL, operation.ExpectedVersion); err != nil {
-		fail(fmt.Errorf("new bridge version mismatch: %w", err), true)
+	if err := s.dependencies.Supervisor.VerifyVersion(ctx, s.dependencies.HealthURL, operation.ExpectedVersion, operation.ExpectedCommit); err != nil {
+		fail(fmt.Errorf("new bridge artifact mismatch: %w", err), true)
 		return
 	}
 	if err := s.dependencies.Supervisor.Finalize(ctx, replacement); err != nil {
