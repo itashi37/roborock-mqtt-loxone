@@ -1,7 +1,7 @@
 import { ChevronDown, CircleHelp, KeyRound, Link2, Network, ShieldCheck } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { directCommandURL, directConnectorAddress, normalizeBridgeAddress } from '@/lib/loxone';
+import { directCommandURL, directConnectorAddress, normalizeBridgeAddress, suggestedLoxoneInputLabel } from '@/lib/loxone';
 import type { LoxoneDirectInput, LoxoneDirectOutput, LoxoneRobot } from '@/types/loxone';
 import { CopyButton, EmptyState, StatusBadge } from './LoxoneUI';
 
@@ -67,10 +67,10 @@ export function DirectHttpSetupPanel({ robot, apiUsername, tokenConfigured }: Pr
         <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground"><StatusBadge tone="blue">Basic authentication</StatusBadge><span>User: <code>{apiUsername}</code></span><span>Protocol: HTTP{address.value.startsWith('https:') ? 'S' : ''}</span></div>
       </SetupStep>
 
-      <SetupStep number="2" title={`Virtual Inputs (${inputs.length})`} description="Create these exact names in Loxone Config. There is no URL to paste here: the bridge pushes each changed value to the Miniserver automatically.">
+      <SetupStep number="2" title={`Virtual Inputs (${inputs.length})`} description="Keep the exact input name for HTTP updates. Copy the suggested label into a separate display/description field when available; do not replace the exact name unless you also configure an input override.">
         {inputs.length === 0 ? <EmptyState>No Direct input plan is available yet. Refresh after the robot has reported its status.</EmptyState> : <details className="rounded-lg border border-border">
           <summary className="cursor-pointer px-3 py-3 text-sm font-medium">Show the complete input list</summary>
-          <div className="divide-y divide-border border-t border-border">{inputs.map(input => <InputRow key={`${input.field}:${input.name}`} input={input} />)}</div>
+          <div className="divide-y divide-border border-t border-border">{inputs.map(input => <InputRow key={`${input.field}:${input.name}`} input={input} robotName={robot.name} />)}</div>
         </details>}
         <div className="mt-3 grid gap-2 sm:grid-cols-3"><TypeHint kind="digital" text="Virtual Input · digital" /><TypeHint kind="analog" text="Virtual Input · analog" /><TypeHint kind="text" text="Virtual Text Input" /></div>
       </SetupStep>
@@ -95,8 +95,9 @@ function CopyField({ label, value, copyEnabled, help }: { label: string; value: 
   return <div className="mt-3"><div className="mb-1 flex items-center justify-between gap-2"><span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>{help && <span className="hidden text-xs text-muted-foreground lg:block">{help}</span>}</div><div className="flex min-w-0 gap-2"><code className="min-w-0 flex-1 overflow-x-auto rounded-lg border border-border bg-muted/50 px-3 py-2.5 text-xs whitespace-nowrap">{value || 'Enter a valid bridge address'}</code><CopyButton value={value} disabled={!copyEnabled} label={`Copy ${label}`} /></div>{help && <p className="mt-1 text-xs text-muted-foreground lg:hidden">{help}</p>}</div>;
 }
 
-function InputRow({ input }: { input: LoxoneDirectInput }) {
-  return <div className="grid gap-2 p-3 sm:grid-cols-[100px_1fr_auto] sm:items-center"><StatusBadge tone={input.kind === 'digital' ? 'green' : input.kind === 'text' ? 'blue' : 'neutral'}>{input.kind}</StatusBadge><div className="min-w-0"><code className="block truncate text-xs font-semibold" title={input.name}>{input.name}</code><span className="text-xs text-muted-foreground">{inputLabels[input.field] ?? input.field}</span></div><CopyButton value={input.name} label={`Copy ${input.name}`} /></div>;
+function InputRow({ input, robotName }: { input: LoxoneDirectInput; robotName: string }) {
+  const suggestedLabel = suggestedLoxoneInputLabel(robotName, input.field);
+  return <div className="grid gap-3 p-3 sm:grid-cols-[100px_1fr] sm:items-start"><StatusBadge tone={input.kind === 'digital' ? 'green' : input.kind === 'text' ? 'blue' : 'neutral'}>{input.kind}</StatusBadge><div className="min-w-0 space-y-2"><div className="flex min-w-0 items-center gap-2"><div className="min-w-0 flex-1"><span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Exact input name</span><code className="block truncate text-xs font-semibold" title={input.name}>{input.name}</code><span className="text-xs text-muted-foreground">{inputLabels[input.field] ?? input.field}</span></div><CopyButton value={input.name} label={`Copy exact input name ${input.name}`} /></div><div className="flex min-w-0 items-center gap-2 rounded-lg bg-muted/60 px-3 py-2"><div className="min-w-0 flex-1"><span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Suggested label</span><span className="block truncate text-sm font-medium" title={suggestedLabel}>{suggestedLabel}</span></div><CopyButton value={suggestedLabel} label={`Copy suggested label ${suggestedLabel}`} /></div></div></div>;
 }
 
 function TypeHint({ kind, text }: { kind: LoxoneDirectInput['kind']; text: string }) {

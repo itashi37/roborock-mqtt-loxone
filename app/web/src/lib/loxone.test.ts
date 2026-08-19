@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultLoxoneSelection, directCommandURL, directConnectorAddress, latestActivity, latestSceneActivity, mergeActivities, normalizeBridgeAddress, subscriptionBudget, updateSelectedID, validateRoomDrafts } from './loxone';
+import { defaultLoxoneSelection, directCommandURL, directConnectorAddress, latestActivity, latestSceneActivity, mergeActivities, normalizeBridgeAddress, subscriptionBudget, suggestedLoxoneInputLabel, updateSelectedID, validateRoomDrafts } from './loxone';
 import type { LoxoneIntegration, LoxoneRoom } from '@/types/loxone';
 
 describe('Loxone integration helpers', () => {
@@ -61,5 +61,11 @@ describe('Loxone integration helpers', () => {
     expect(connector).toBe('https://loxone:abc%20123@bridge.local:8443');
     expect(directCommandURL(connector, '/api/loxone/direct/v1/devices/vacuum/commands/start')).toBe('https://loxone:abc%20123@bridge.local:8443/api/loxone/direct/v1/devices/vacuum/commands/start');
     expect(() => normalizeBridgeAddress('ftp://bridge.local')).toThrow('HTTP or HTTPS');
+  });
+
+  it('suggests short readable Loxone input labels without changing technical IDs', () => {
+    expect(suggestedLoxoneInputLabel('Roborock Qrevo Curv', 'battery')).toBe('Qrevo Curv — Batterie');
+    expect(suggestedLoxoneInputLabel('S8 Étage', 'current_room_name')).toBe('S8 Étage — Pièce actuelle');
+    expect(suggestedLoxoneInputLabel('', 'custom_field')).toBe('Robot — Custom Field');
   });
 });

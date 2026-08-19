@@ -102,3 +102,19 @@ export function directConnectorAddress(baseAddress: string, username: string, to
 export function directCommandURL(connectorAddress: string, path: string): string {
   return `${connectorAddress.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
 }
+
+const directInputLabels: Record<string, string> = {
+  online: 'En ligne', battery: 'Batterie', state: 'État (code)', state_text: 'État (texte)',
+  current_room_id: 'Pièce actuelle (ID)', current_room_name: 'Pièce actuelle',
+  error_code: 'Erreur (code)', error_text: 'Erreur (texte)', clean_area: 'Surface nettoyée',
+  clean_time_seconds: 'Temps de nettoyage', last_seen: 'Dernière mise à jour',
+  main_brush: 'Brosse principale', side_brush: 'Brosse latérale', filter: 'Filtre', sensor: 'Capteurs',
+  dock_type: 'Type de station', charge_status: 'Charge', dock_error_status: 'Erreur station',
+  dust_collection_status: 'Vidage du bac', wash_status: 'Lavage serpillière', dry_status: 'Séchage serpillière',
+};
+
+export function suggestedLoxoneInputLabel(robotName: string, field: string): string {
+  const shortRobotName = robotName.trim().replace(/^roborock\s+/i, '') || 'Robot';
+  const fallback = field.replace(/_/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
+  return `${shortRobotName} — ${directInputLabels[field] ?? fallback}`;
+}
