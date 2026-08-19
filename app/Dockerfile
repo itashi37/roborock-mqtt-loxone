@@ -34,7 +34,8 @@ COPY . .
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -a -installsuffix cgo \
     -ldflags "-s -w -X github.com/mqtt-home/roborock-mqtt/version.Version=${VERSION} -X github.com/mqtt-home/roborock-mqtt/version.GitCommit=${GIT_COMMIT} -X github.com/mqtt-home/roborock-mqtt/version.BuildTime=${BUILD_TIME}" \
-    -o roborock-mqtt-loxone .
+    -o roborock-mqtt-loxone . && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -a -installsuffix cgo -o roborock-updater ./cmd/updater
 
 # Final stage
 FROM gcr.io/distroless/static:nonroot
@@ -42,6 +43,7 @@ FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 
 COPY --from=backend-builder /app/roborock-mqtt-loxone /roborock-mqtt-loxone
+COPY --from=backend-builder /app/roborock-updater /roborock-updater
 COPY --from=frontend-builder /app/web/dist /web/dist
 COPY --chown=nonroot:nonroot docker/data /var/lib/roborock-mqtt-loxone
 

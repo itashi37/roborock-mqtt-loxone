@@ -5,7 +5,7 @@ services:
     build:
       context: ./app
       dockerfile: Dockerfile
-    image: roborock-mqtt-loxone:local
+    image: "${ROBOROCK_IMAGE:-roborock-mqtt-loxone:local}"
     container_name: roborock-mqtt-loxone
     restart: unless-stopped
     ports:
@@ -14,6 +14,45 @@ services:
       - "${ROBOROCK_DATA_DIR:-roborock-data}:/var/lib/roborock-mqtt-loxone"
     environment:
       TZ: "${TZ:-Europe/Paris}"
+    networks:
+      - roborock
+
+  updater:
+    image: "${ROBOROCK_IMAGE:-roborock-mqtt-loxone:local}"
+    container_name: roborock-mqtt-loxone-updater
+    profiles: ["updates"]
+    restart: unless-stopped
+    depends_on:
+      - bridge
+    entrypoint: ["/roborock-updater"]
+    expose:
+      - "8090"
+    healthcheck:
+      test: ["CMD", "/roborock-updater", "--healthcheck", "http://127.0.0.1:8090/v1/health"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+    environment:
+      UPDATER_TOKEN_FILE: /run/secrets/updater_token
+      BRIDGE_CONTAINER: roborock-mqtt-loxone
+      BRIDGE_STATUS_URL: http://roborock-mqtt-loxone:8080/api/system/status
+      BRIDGE_DATA_DIR: /bridge-data
+      DOCKER_SOCKET: /var/run/docker.sock
+    secrets:
+      - updater_token
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - "${ROBOROCK_DATA_DIR:-roborock-data}:/bridge-data"
+    group_add:
+      - "${DOCKER_GID:-0}"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
     networks:
       - roborock
 
@@ -38,3 +77,7 @@ volumes:
   roborock-data:
   mosquitto-data:
   mosquitto-log:
+
+secrets:
+  updater_token:
+    file: "${UPDATER_TOKEN_FILE:-./deploy/updater-token}"

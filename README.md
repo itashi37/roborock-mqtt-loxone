@@ -52,6 +52,41 @@ GitHub release metadata for Stable or the latest `main` commit for Beta/Edge.
 It does not require or expose a GitHub/Registry credential. In this phase the
 page is discovery-only and deliberately has no Docker access.
 
+### Isolated updater security model
+
+The optional `updates` Compose profile starts a separate
+`roborock-mqtt-loxone-updater` process. The bridge container never receives the
+Docker socket. The updater has no host port and accepts only authenticated
+health/status/install operations on the private Compose network. Install
+requests can select only a validated tag of
+`ghcr.io/itashi37/roborock-mqtt-loxone`; container names, image repositories,
+shell commands, Docker arguments, and arbitrary URLs are not accepted.
+
+The updater talks to the Docker Engine API directly and therefore its socket
+access is effectively root-equivalent on the NAS. `read_only`,
+`no-new-privileges`, a non-root process, rate limiting, anti-replay request IDs,
+and the strict allowlist reduce exposure but do not make Docker-socket access
+unprivileged. Never expose port 8090 outside the private Compose network.
+
+Generate a dedicated token and determine the Docker socket group ID before
+enabling the profile:
+
+```bash
+openssl rand -hex 32
+stat -c '%g' /var/run/docker.sock
+```
+
+Store the token in `deploy/updater-token` with mode `0600`, and set
+`DOCKER_GID` in the Compose `.env`; the secret is mounted as a file and does
+not appear in the container environment. Then start the optional service with
+`docker compose --profile updates up -d`.
+The updater backs up the data volume under `backups/`, pulls the allowlisted
+image, recreates only `roborock-mqtt-loxone`, waits for its Docker healthcheck,
+verifies the reported version, and restores the previous container on failure.
+Operation state is persisted as `update-operation.json`. A Docker socket proxy
+can still be placed in front of the updater, but the create/start/stop/remove
+and image-pull permissions required for replacement remain highly privileged.
+
 ```bash
 git clone https://github.com/itashi37/roborock-mqtt-loxone.git
 cd roborock-mqtt-loxone
