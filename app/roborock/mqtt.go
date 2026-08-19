@@ -9,6 +9,7 @@ import (
 	"io"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
@@ -36,6 +37,7 @@ type CloudMQTT struct {
 	availKnown          bool
 	consecutiveTimeouts int
 	stopCh              chan struct{}
+	lastMessageAt       atomic.Int64
 }
 
 // NewCloudMQTT creates a new Roborock cloud MQTT client.
@@ -148,6 +150,7 @@ func (cm *CloudMQTT) onConnectionLost(_ pahomqtt.Client, err error) {
 }
 
 func (cm *CloudMQTT) handleMessage(_ pahomqtt.Client, mqttMsg pahomqtt.Message) {
+	cm.lastMessageAt.Store(time.Now().UnixNano())
 	logger.Debug("Received cloud MQTT message", "topic", mqttMsg.Topic(), "len", len(mqttMsg.Payload()))
 	cm.resetTimeouts()
 
@@ -199,6 +202,14 @@ func (cm *CloudMQTT) handleMessage(_ pahomqtt.Client, mqttMsg pahomqtt.Message) 
 			cm.processIPCResult(ipcResp.Result)
 		}
 	}
+}
+
+func (cm *CloudMQTT) LastMessageAt() time.Time {
+	value := cm.lastMessageAt.Load()
+	if value == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, value)
 }
 
 func (cm *CloudMQTT) processIPCResult(result any) {

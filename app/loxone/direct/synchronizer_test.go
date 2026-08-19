@@ -16,6 +16,20 @@ type recordingPusher struct {
 	failures int
 }
 
+type blockingPusher struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *blockingPusher) Push(context.Context, string, string) error {
+	select {
+	case p.started <- struct{}{}:
+	default:
+	}
+	<-p.release
+	return nil
+}
+
 func (p *recordingPusher) Push(_ context.Context, input, value string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -96,4 +110,17 @@ func TestSynchronizerRetriesAndRecordsDiagnostics(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("successful retry was not recorded")
+}
+
+func TestSynchronizerReportsPendingQueueDepth(t *testing.T) {
+	pusher := &blockingPusher{started: make(chan struct{}, 1), release: make(chan struct{})}
+	synchronizer := NewSynchronizer(pusher, InputMapping{Prefix: "RR"}, 0, time.Millisecond, nil)
+	defer synchronizer.Close()
+	synchronizer.UpdateInstallation(InstallationValue("bridge_alive", Digital, "1", InputMapping{Prefix: "RR"}), true)
+	<-pusher.started
+	synchronizer.UpdateInstallation(InstallationValue("cloud_connected", Digital, "0", InputMapping{Prefix: "RR"}), true)
+	if diagnostics := synchronizer.Diagnostics(); diagnostics.Pending != 1 {
+		t.Fatalf("pending=%d, want 1", diagnostics.Pending)
+	}
+	close(pusher.release)
 }

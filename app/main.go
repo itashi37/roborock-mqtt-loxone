@@ -13,12 +13,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/mqtt-home/roborock-mqtt/config"
 	bridgehealth "github.com/mqtt-home/roborock-mqtt/integration/health"
 	"github.com/mqtt-home/roborock-mqtt/integration/localmqtt"
+	"github.com/mqtt-home/roborock-mqtt/integration/watchdog"
 	loxonedirect "github.com/mqtt-home/roborock-mqtt/loxone/direct"
 	"github.com/mqtt-home/roborock-mqtt/roborock"
 	"github.com/mqtt-home/roborock-mqtt/version"
@@ -50,7 +52,97 @@ var (
 	scheduleSignals       *roborock.SignalListener
 	integrationMu         sync.Mutex
 	healthPublisher       *bridgehealth.Publisher
+	watchdogMonitor       *watchdog.Monitor
+	watchdogExit          = make(chan string, 1)
+	watchdogRecovery      atomic.Bool
+	processStartedAt      = time.Now()
 )
+
+func watchdogConfig(cfg config.WatchdogConfig) watchdog.Config {
+	return watchdog.Config{
+		Enabled: cfg.IsEnabled(), CheckInterval: time.Duration(cfg.CheckIntervalSeconds) * time.Second,
+		StaleAfter:         time.Duration(cfg.StaleAfterSeconds) * time.Second,
+		ReconnectAfter:     time.Duration(cfg.ReconnectAfterSeconds) * time.Second,
+		RebuildAfter:       time.Duration(cfg.RebuildAfterSeconds) * time.Second,
+		ResetAfter:         time.Duration(cfg.ResetAfterSeconds) * time.Second,
+		RestartAfter:       time.Duration(cfg.RestartAfterSeconds) * time.Second,
+		RecoveryHysteresis: cfg.RecoveryHysteresisChecks, MaxRestarts: cfg.MaxRestartsPerHour,
+		RestartWindow: time.Hour, MaxQueueDepth: cfg.MaxQueueDepth,
+	}
+}
+
+func watchdogObservation(restClient *roborock.Client, now time.Time) watchdog.Observation {
+	observation := watchdog.Observation{ObservedAt: now, StartedAt: processStartedAt, Authenticated: restClient.IsAuthenticated()}
+	if deviceManager != nil {
+		observation.BridgeStarted = true
+		observation.RoborockLoopLastActive = deviceManager.LoopLastActive()
+		observation.CloudConnected = deviceManager.ConnectedCount() > 0
+		observation.LastCloudMessage = deviceManager.LastCloudMessage()
+		observation.LastRobotUpdate = deviceManager.LastRobotUpdate()
+	}
+	if commandCoordinator != nil {
+		diagnostics := commandCoordinator.Diagnostics()
+		observation.DispatcherInFlight = diagnostics.InFlight
+		observation.DispatcherOldest = diagnostics.Oldest
+		observation.DispatcherLastCompleted = diagnostics.LastCompleted
+	}
+	mqttDiagnostics := localBroker.Diagnostics()
+	observation.LocalMQTTEnabled = localMQTTEnabled()
+	observation.LocalMQTTConnected = mqttDiagnostics.Connected
+	observation.DirectEnabled = config.Get().Loxone.Direct.Enabled
+	if observation.DirectEnabled {
+		diagnostics := directDiagnosticsSnapshot()
+		observation.DirectPending = diagnostics.Pending
+		observation.DirectLastSuccess = diagnostics.LastTransmission
+		observation.DirectLastError = diagnostics.LastError
+	}
+	return observation
+}
+
+func runWatchdogRecovery(action, reason string, restClient *roborock.Client) {
+	if !watchdogRecovery.CompareAndSwap(false, true) {
+		logger.Warn("Watchdog recovery already running", "requested", action)
+		return
+	}
+	go func() {
+		defer watchdogRecovery.Store(false)
+		logger.Warn("Watchdog recovery", "action", action, "reason", reason)
+		if deviceManager != nil {
+			deviceManager.ReconnectAll()
+		}
+		if action == "rebuild" || action == "reset" {
+			integrationMu.Lock()
+			configureDirectLoxone()
+			if err := configureLocalMQTT(restClient); err != nil {
+				logger.Warn("Watchdog integration rebuild failed", "error", err)
+			}
+			integrationMu.Unlock()
+		}
+	}()
+}
+
+func startWatchdog(restClient *roborock.Client) {
+	if watchdogMonitor != nil {
+		watchdogMonitor.Stop()
+	}
+	guard := watchdog.NewRestartGuard(dataDir)
+	watchdogMonitor = watchdog.NewMonitor(
+		watchdogConfig(config.Get().Watchdog),
+		func(now time.Time) watchdog.Observation { return watchdogObservation(restClient, now) },
+		watchdog.Actions{
+			Reconnect: func(reason string) { runWatchdogRecovery("reconnect", reason, restClient) },
+			Rebuild:   func(reason string) { runWatchdogRecovery("rebuild", reason, restClient) },
+			Reset:     func(reason string) { runWatchdogRecovery("reset", reason, restClient) },
+			Exit: func(reason string) {
+				select {
+				case watchdogExit <- reason:
+				default:
+				}
+			},
+		}, guard,
+	)
+	watchdogMonitor.Start()
+}
 
 func localMQTTEnabled() bool { return config.Get().MQTT.IsEnabled() }
 
@@ -1092,6 +1184,13 @@ func main() {
 	})
 	wireLoxoneWeb(restClient)
 	wireIntegrationSettings(restClient)
+	startWatchdog(restClient)
+	webServer.SetHealthProvider(func() watchdog.Report {
+		if watchdogMonitor == nil {
+			return watchdog.Assess(watchdogObservation(restClient, time.Now()), watchdogConfig(config.Get().Watchdog))
+		}
+		return watchdogMonitor.Report()
+	})
 
 	// Wire schedule engine to web server if bridge already started
 	if scheduleEngine != nil {
@@ -1124,7 +1223,17 @@ func main() {
 
 	quitChannel := make(chan os.Signal, 1)
 	signal.Notify(quitChannel, syscall.SIGINT, syscall.SIGTERM)
-	<-quitChannel
+	exitCode := 0
+	select {
+	case <-quitChannel:
+	case reason := <-watchdogExit:
+		exitCode = 2
+		logger.Error("Watchdog requested process restart", "reason", reason)
+	}
+
+	if watchdogMonitor != nil {
+		watchdogMonitor.Stop()
+	}
 
 	if stopSchedule != nil {
 		close(stopSchedule)
@@ -1143,6 +1252,9 @@ func main() {
 	}
 	localBroker.Stop()
 	logger.Info("Shutdown complete")
+	if exitCode != 0 {
+		os.Exit(exitCode)
+	}
 }
 
 func initPprof() {

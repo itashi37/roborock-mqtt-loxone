@@ -438,6 +438,42 @@ a completely unavailable bridge. Interpretation:
 - heartbeat current, cloud `0`: Roborock cloud or Internet unavailable;
 - heartbeat current, cloud `1`, robot `0`: robot Wi-Fi, power, or response problem.
 
+#### Internal watchdog and HTTP probes
+
+The internal watchdog observes the Roborock polling loop, last cloud and robot
+updates, command dispatcher, Direct HTTP queue, and every enabled transport. It
+first reconnects, then rebuilds connections and finally resets the affected
+subsystems. It exits with a non-zero code only when an internal loop or queue
+remains blocked for the configured fatal threshold; a temporary cloud outage
+alone never requests a process restart. Restart attempts are persisted in the
+data volume and limited to three per hour by default.
+
+| Endpoint | Success condition |
+|----------|-------------------|
+| `GET /api/live` | Process, polling loop, dispatcher and queues are responsive; use this for Docker `HEALTHCHECK` |
+| `GET /api/livez` | Backwards-compatible alias of `/api/live` |
+| `GET /api/ready` | Live, authenticated, bridge started, cloud connected, and every enabled transport ready |
+| `GET /api/health` | The complete report is `healthy`; otherwise returns 503 with component diagnostics and the last watchdog reason |
+
+Optional `watchdog` configuration values are expressed in seconds:
+
+```json
+{
+  "watchdog": {
+    "enabled": true,
+    "check_interval_seconds": 30,
+    "stale_after_seconds": 120,
+    "reconnect_after_seconds": 120,
+    "rebuild_after_seconds": 300,
+    "reset_after_seconds": 480,
+    "restart_after_seconds": 900,
+    "recovery_hysteresis_checks": 2,
+    "max_restarts_per_hour": 3,
+    "max_queue_depth": 256
+  }
+}
+```
+
 Stable state values include `offline`, `unknown`, `starting`, `idle`, `manual`,
 `cleaning`, `paused`, `returning`, `charging`, `docked`, `error`,
 `shutting_down`, `updating`, `going_to_target`, `emptying_dustbin`,
@@ -618,7 +654,9 @@ make docker
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/health` | Health check |
+| `GET` | `/api/health` | Complete internal health report |
+| `GET` | `/api/live` | Process liveness probe used by Docker |
+| `GET` | `/api/ready` | Dependency readiness probe |
 | `GET` | `/api/fleet/health` | Fleet health, latency and polling backoff |
 | `GET` | `/api/setup/status` | Sanitized setup/integration status |
 | `PUT` | `/api/setup/settings` | Persist and live-apply integration settings |

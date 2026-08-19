@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/philipparndt/go-logger"
@@ -103,6 +104,8 @@ type DeviceManager struct {
 	onAvailability func(slug string, online bool)
 	onInventory    func(slug string, mappings []RoomMapping, roomsKnown bool, scenes []Scene, scenesKnown bool)
 	onHealth       func(slug string, health DeviceHealth)
+	recoveryMu     sync.RWMutex
+	loopLastActive atomic.Int64
 }
 
 // NewDeviceManager creates a manager for the given devices.
@@ -216,6 +219,12 @@ func (dm *DeviceManager) ConnectionStates() map[string]bool {
 
 // ConnectAll establishes cloud MQTT connections for all devices.
 func (dm *DeviceManager) ConnectAll() {
+	dm.recoveryMu.Lock()
+	defer dm.recoveryMu.Unlock()
+	dm.connectAllLocked()
+}
+
+func (dm *DeviceManager) connectAllLocked() {
 	for _, md := range dm.devices {
 		dev := md // capture
 		cloudMQTT := NewCloudMQTT(dm.loginData, &dev.Info)
@@ -344,15 +353,34 @@ func (dm *DeviceManager) SceneRecordedMinutes(slug string, sceneID int) int {
 
 // DisconnectAll disconnects all devices.
 func (dm *DeviceManager) DisconnectAll() {
+	dm.recoveryMu.Lock()
+	defer dm.recoveryMu.Unlock()
+	dm.disconnectAllLocked()
+}
+
+func (dm *DeviceManager) disconnectAllLocked() {
 	for _, md := range dm.devices {
 		if md.CloudMQTT != nil {
 			md.CloudMQTT.Disconnect()
+			md.CloudMQTT = nil
 		}
 	}
 }
 
+// ReconnectAll rebuilds each Roborock cloud client under an exclusive recovery
+// lock so polling cannot race a watchdog repair.
+func (dm *DeviceManager) ReconnectAll() {
+	dm.recoveryMu.Lock()
+	defer dm.recoveryMu.Unlock()
+	dm.disconnectAllLocked()
+	dm.connectAllLocked()
+}
+
 // PollAll polls status, consumables, and maps for all connected devices.
 func (dm *DeviceManager) PollAll() {
+	dm.recoveryMu.RLock()
+	defer dm.recoveryMu.RUnlock()
+	dm.loopLastActive.Store(time.Now().UnixNano())
 	for _, md := range dm.devices {
 		if md.CloudMQTT == nil || !md.CloudMQTT.IsConnected() {
 			continue
@@ -444,17 +472,50 @@ func (dm *DeviceManager) PollAll() {
 
 // StartPolling starts periodic polling for all devices.
 func (dm *DeviceManager) StartPolling(interval time.Duration, stop chan struct{}) {
+	dm.loopLastActive.Store(time.Now().UnixNano())
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
+			dm.loopLastActive.Store(time.Now().UnixNano())
 			dm.PollAll()
 		case <-stop:
 			return
 		}
 	}
+}
+
+func (dm *DeviceManager) LoopLastActive() time.Time {
+	value := dm.loopLastActive.Load()
+	if value == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, value)
+}
+
+func (dm *DeviceManager) LastCloudMessage() time.Time {
+	var latest time.Time
+	for _, device := range dm.GetDevices() {
+		if device.CloudMQTT == nil {
+			continue
+		}
+		if observed := device.CloudMQTT.LastMessageAt(); observed.After(latest) {
+			latest = observed
+		}
+	}
+	return latest
+}
+
+func (dm *DeviceManager) LastRobotUpdate() time.Time {
+	var latest time.Time
+	for _, health := range dm.FleetHealth().Devices {
+		if health.LastCommunication.After(latest) {
+			latest = health.LastCommunication
+		}
+	}
+	return latest
 }
 
 // GetDevice returns a managed device by slug.

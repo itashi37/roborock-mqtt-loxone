@@ -69,6 +69,7 @@ type Config struct {
 	Loxone        LoxoneConfig       `json:"loxone,omitempty"`
 	Web           WebConfig          `json:"web"`
 	Notifications NotificationConfig `json:"notifications,omitempty"`
+	Watchdog      WatchdogConfig     `json:"watchdog,omitempty"`
 	LogLevel      string             `json:"loglevel,omitempty"`
 }
 
@@ -218,6 +219,24 @@ type WebConfig struct {
 	LivenessGraceSeconds int `json:"liveness_grace_seconds,omitempty"`
 }
 
+// WatchdogConfig controls progressive in-process recovery. Pointer Enabled
+// preserves backward compatibility while defaulting existing installations to
+// the safe watchdog policy.
+type WatchdogConfig struct {
+	Enabled                  *bool `json:"enabled,omitempty"`
+	CheckIntervalSeconds     int   `json:"check_interval_seconds,omitempty"`
+	StaleAfterSeconds        int   `json:"stale_after_seconds,omitempty"`
+	ReconnectAfterSeconds    int   `json:"reconnect_after_seconds,omitempty"`
+	RebuildAfterSeconds      int   `json:"rebuild_after_seconds,omitempty"`
+	ResetAfterSeconds        int   `json:"reset_after_seconds,omitempty"`
+	RestartAfterSeconds      int   `json:"restart_after_seconds,omitempty"`
+	RecoveryHysteresisChecks int   `json:"recovery_hysteresis_checks,omitempty"`
+	MaxRestartsPerHour       int   `json:"max_restarts_per_hour,omitempty"`
+	MaxQueueDepth            int   `json:"max_queue_depth,omitempty"`
+}
+
+func (w WatchdogConfig) IsEnabled() bool { return w.Enabled == nil || *w.Enabled }
+
 func LoadConfig(file string) (Config, error) {
 	data, err := os.ReadFile(file)
 	if err != nil {
@@ -275,6 +294,33 @@ func applyDefaults(cfg *Config) {
 
 	if cfg.Web.Port == 0 {
 		cfg.Web.Port = 8080
+	}
+	if cfg.Watchdog.CheckIntervalSeconds <= 0 {
+		cfg.Watchdog.CheckIntervalSeconds = 30
+	}
+	if cfg.Watchdog.StaleAfterSeconds <= 0 {
+		cfg.Watchdog.StaleAfterSeconds = 120
+	}
+	if cfg.Watchdog.ReconnectAfterSeconds <= 0 {
+		cfg.Watchdog.ReconnectAfterSeconds = 120
+	}
+	if cfg.Watchdog.RebuildAfterSeconds <= 0 {
+		cfg.Watchdog.RebuildAfterSeconds = 300
+	}
+	if cfg.Watchdog.ResetAfterSeconds <= 0 {
+		cfg.Watchdog.ResetAfterSeconds = 480
+	}
+	if cfg.Watchdog.RestartAfterSeconds <= 0 {
+		cfg.Watchdog.RestartAfterSeconds = 900
+	}
+	if cfg.Watchdog.RecoveryHysteresisChecks <= 0 {
+		cfg.Watchdog.RecoveryHysteresisChecks = 2
+	}
+	if cfg.Watchdog.MaxRestartsPerHour <= 0 {
+		cfg.Watchdog.MaxRestartsPerHour = 3
+	}
+	if cfg.Watchdog.MaxQueueDepth <= 0 {
+		cfg.Watchdog.MaxQueueDepth = 256
 	}
 
 	cfg.Loxone.Topic = strings.TrimSuffix(strings.TrimSpace(cfg.Loxone.Topic), "/")

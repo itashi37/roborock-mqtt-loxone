@@ -25,6 +25,7 @@ type InputDiagnostic struct {
 type SyncDiagnostics struct {
 	LastTransmission time.Time         `json:"last_transmission,omitempty"`
 	LastError        string            `json:"last_error,omitempty"`
+	Pending          int               `json:"pending"`
 	Inputs           []InputDiagnostic `json:"inputs"`
 }
 
@@ -113,7 +114,7 @@ func (s *Synchronizer) Close() {
 func (s *Synchronizer) Diagnostics() SyncDiagnostics {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	result := SyncDiagnostics{Inputs: make([]InputDiagnostic, 0, len(s.diagnostics))}
+	result := SyncDiagnostics{Pending: len(s.pending), Inputs: make([]InputDiagnostic, 0, len(s.diagnostics))}
 	for _, diagnostic := range s.diagnostics {
 		result.Inputs = append(result.Inputs, diagnostic)
 		if diagnostic.LastSuccess.After(result.LastTransmission) {

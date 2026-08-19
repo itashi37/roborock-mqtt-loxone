@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/mqtt-home/roborock-mqtt/config"
+	"github.com/mqtt-home/roborock-mqtt/integration/watchdog"
 	"github.com/mqtt-home/roborock-mqtt/roborock"
 	"github.com/philipparndt/go-logger"
 	loggerchi "github.com/philipparndt/go-logger/chi"
@@ -39,21 +39,9 @@ type WebServer struct {
 	router         *chi.Mux
 	sseClients     map[string]*SSEClient
 	sseClientsMu   sync.RWMutex
-	// Liveness: timestamp at which the bridge first became unhealthy (not
-	// authenticated, or no device connected). nil while healthy. The probe fails
-	// only once this exceeds the grace window, so transient blips don't restart.
-	unhealthySince *time.Time
-	unhealthyMu    sync.Mutex
+	healthProvider func() watchdog.Report
+	healthMu       sync.RWMutex
 	directLimiter  directCommandLimiter
-}
-
-// livenessGrace returns the configured grace window before liveness fails,
-// defaulting to 4 minutes when unset.
-func (ws *WebServer) livenessGrace() time.Duration {
-	if s := config.Get().Web.LivenessGraceSeconds; s > 0 {
-		return time.Duration(s) * time.Second
-	}
-	return 4 * time.Minute
 }
 
 func NewWebServer(
@@ -77,6 +65,13 @@ func NewWebServer(
 // SetDeviceManager updates the device manager after authentication.
 func (ws *WebServer) SetDeviceManager(dm *roborock.DeviceManager) {
 	ws.deviceManager = dm
+}
+
+// SetHealthProvider wires the internal watchdog report into the HTTP probes.
+func (ws *WebServer) SetHealthProvider(provider func() watchdog.Report) {
+	ws.healthMu.Lock()
+	ws.healthProvider = provider
+	ws.healthMu.Unlock()
 }
 
 // SetScheduleEngine sets the schedule engine after bridge startup.
@@ -122,7 +117,9 @@ func (ws *WebServer) setupRoutes() {
 
 	ws.router.Route("/api", func(r chi.Router) {
 		r.Get("/health", ws.healthCheck)
-		r.Get("/livez", ws.liveness)
+		r.Get("/live", ws.liveness)
+		r.Get("/livez", ws.liveness) // backwards-compatible alias
+		r.Get("/ready", ws.readiness)
 		r.Get("/fleet/health", ws.fleetHealth)
 		r.Get("/loxone/templates/status", ws.loxoneTemplateStatus)
 		r.Get("/setup/status", ws.setupStatus)
@@ -503,18 +500,8 @@ func (ws *WebServer) getDeviceFromRequest(w http.ResponseWriter, r *http.Request
 	return dev
 }
 
-// healthCheck is the always-200 human/diagnostic endpoint. It reports auth and
-// per-device connection state in the body but never fails — use /livez for the
-// k8s liveness probe.
 func (ws *WebServer) healthCheck(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"status":        "ok",
-		"goroutines":    runtime.NumGoroutine(),
-		"authenticated": ws.restClient.IsAuthenticated(),
-		"devices":       ws.connectionStates(),
-		"timestamp":     time.Now().UTC().Format(time.RFC3339),
-	})
+	ws.writeHealthReport(w, ws.healthReport(), func(report watchdog.Report) bool { return report.Status == "healthy" })
 }
 
 // connectionStates returns each device's slug → live connection state, or an
@@ -526,57 +513,37 @@ func (ws *WebServer) connectionStates() map[string]bool {
 	return ws.deviceManager.ConnectionStates()
 }
 
-// liveness is the k8s liveness probe. It returns 200 while the bridge is healthy
-// (authenticated AND at least one device connected) or has been unhealthy for
-// less than the grace window; it returns 503 once the bridge has been
-// unrecoverably stuck for longer than the grace window, prompting a pod restart
-// — the proven recovery for an expired cloud session. Transient cloud blips stay
-// within the grace window and do not trigger a restart loop.
 func (ws *WebServer) liveness(w http.ResponseWriter, _ *http.Request) {
-	authenticated := ws.restClient.IsAuthenticated()
-	connected := ws.deviceManager != nil && ws.deviceManager.ConnectedCount() > 0
-	healthy := authenticated && connected
-
-	now := time.Now()
-	grace := ws.livenessGrace()
-
-	ws.unhealthyMu.Lock()
-	statusCode, newSince, stuckFor := evaluateLiveness(healthy, ws.unhealthySince, now, grace)
-	ws.unhealthySince = newSince
-	ws.unhealthyMu.Unlock()
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(map[string]any{
-		"healthy":         healthy,
-		"authenticated":   authenticated,
-		"devicesOnline":   ws.deviceManagerConnectedCount(),
-		"stuckForSeconds": int(stuckFor.Seconds()),
-		"graceSeconds":    int(grace.Seconds()),
-		"timestamp":       now.UTC().Format(time.RFC3339),
-	})
+	ws.writeHealthReport(w, ws.healthReport(), func(report watchdog.Report) bool { return report.Live })
 }
 
-// evaluateLiveness is the pure liveness decision. Given the current health, the
-// timestamp the bridge first became unhealthy (nil while healthy), the current
-// time and the grace window, it returns the HTTP status, the updated
-// unhealthy-since timestamp (cleared when healthy), and how long it has been
-// stuck. The probe fails (503) only once the bridge has been continuously
-// unhealthy for longer than the grace window.
-func evaluateLiveness(healthy bool, unhealthySince *time.Time, now time.Time, grace time.Duration) (statusCode int, newSince *time.Time, stuckFor time.Duration) {
-	if healthy {
-		return http.StatusOK, nil, 0
+func (ws *WebServer) readiness(w http.ResponseWriter, _ *http.Request) {
+	ws.writeHealthReport(w, ws.healthReport(), func(report watchdog.Report) bool { return report.Ready })
+}
+
+func (ws *WebServer) healthReport() watchdog.Report {
+	ws.healthMu.RLock()
+	provider := ws.healthProvider
+	ws.healthMu.RUnlock()
+	if provider != nil {
+		return provider()
 	}
-	if unhealthySince == nil {
-		t := now
-		unhealthySince = &t
+	now := time.Now()
+	authenticated := ws.restClient != nil && ws.restClient.IsAuthenticated()
+	connected := ws.deviceManager != nil && ws.deviceManager.ConnectedCount() > 0
+	return watchdog.Assess(watchdog.Observation{
+		ObservedAt: now, StartedAt: now, Authenticated: authenticated,
+		BridgeStarted: ws.deviceManager != nil, RoborockLoopLastActive: now,
+		CloudConnected: connected, LastRobotUpdate: now,
+	}, watchdog.DefaultConfig())
+}
+
+func (ws *WebServer) writeHealthReport(w http.ResponseWriter, report watchdog.Report, acceptable func(watchdog.Report) bool) {
+	w.Header().Set("Content-Type", "application/json")
+	if !acceptable(report) {
+		w.WriteHeader(http.StatusServiceUnavailable)
 	}
-	stuckFor = now.Sub(*unhealthySince)
-	statusCode = http.StatusOK
-	if stuckFor > grace {
-		statusCode = http.StatusServiceUnavailable
-	}
-	return statusCode, unhealthySince, stuckFor
+	_ = json.NewEncoder(w).Encode(report)
 }
 
 func (ws *WebServer) deviceManagerConnectedCount() int {

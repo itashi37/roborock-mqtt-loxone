@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,11 +27,14 @@ type CommandSubmission struct {
 }
 
 type CommandCoordinator struct {
-	tracker    *LoxoneActivityTracker
-	timeout    time.Duration
-	resolve    func(string) (CommandContext, bool)
-	dispatch   func(CommandContext, LoxoneCommand) error
-	onActivity func(string, []LoxoneActivity)
+	tracker       *LoxoneActivityTracker
+	timeout       time.Duration
+	resolve       func(string) (CommandContext, bool)
+	dispatch      func(CommandContext, LoxoneCommand) error
+	onActivity    func(string, []LoxoneActivity)
+	diagnosticsMu sync.RWMutex
+	inFlight      map[string]time.Time
+	lastCompleted time.Time
 }
 
 func NewCommandCoordinator(
@@ -40,7 +44,7 @@ func NewCommandCoordinator(
 	onActivity func(string, []LoxoneActivity),
 ) *CommandCoordinator {
 	return &CommandCoordinator{
-		tracker: NewLoxoneActivityTracker(debounce), timeout: timeout,
+		tracker: NewLoxoneActivityTracker(debounce), timeout: timeout, inFlight: make(map[string]time.Time),
 		resolve: resolve, dispatch: dispatch, onActivity: onActivity,
 	}
 }
@@ -67,6 +71,9 @@ func (c *CommandCoordinator) SubmitParsed(context CommandContext, raw string, co
 	if !decision.Dispatch {
 		return result
 	}
+	c.diagnosticsMu.Lock()
+	c.inFlight[decision.ID] = now
+	c.diagnosticsMu.Unlock()
 
 	time.AfterFunc(c.timeout, func() {
 		if activity := c.tracker.ExpireCommand(context.Slug, decision.ID, time.Now()); activity != nil {
@@ -74,6 +81,7 @@ func (c *CommandCoordinator) SubmitParsed(context CommandContext, raw string, co
 		}
 	})
 	go func() {
+		defer c.completeDispatch(decision.ID)
 		if err := c.dispatch(context, command); err != nil {
 			if activity := c.tracker.MarkFailed(context.Slug, decision.ID, err.Error(), time.Now()); activity != nil {
 				c.emit(context.Slug, []LoxoneActivity{*activity})
@@ -90,6 +98,34 @@ func (c *CommandCoordinator) SubmitParsed(context CommandContext, raw string, co
 		}
 	}()
 	return result
+}
+
+type DispatcherDiagnostics struct {
+	InFlight      int       `json:"in_flight"`
+	Oldest        time.Time `json:"oldest,omitempty"`
+	LastCompleted time.Time `json:"last_completed,omitempty"`
+}
+
+func (c *CommandCoordinator) Diagnostics() DispatcherDiagnostics {
+	if c == nil {
+		return DispatcherDiagnostics{}
+	}
+	c.diagnosticsMu.RLock()
+	defer c.diagnosticsMu.RUnlock()
+	result := DispatcherDiagnostics{InFlight: len(c.inFlight), LastCompleted: c.lastCompleted}
+	for _, started := range c.inFlight {
+		if result.Oldest.IsZero() || started.Before(result.Oldest) {
+			result.Oldest = started
+		}
+	}
+	return result
+}
+
+func (c *CommandCoordinator) completeDispatch(id string) {
+	c.diagnosticsMu.Lock()
+	delete(c.inFlight, id)
+	c.lastCompleted = time.Now()
+	c.diagnosticsMu.Unlock()
 }
 
 func (c *CommandCoordinator) UpdateStatus(slug string, status *PublishedStatus, now time.Time) {

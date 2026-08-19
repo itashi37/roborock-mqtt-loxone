@@ -8,7 +8,7 @@ COPY --chown=nonroot:nonroot docker/data /var/lib/roborock-mqtt-loxone
 
 VOLUME ["/var/lib/roborock-mqtt-loxone"]
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=6s --start-period=30s --retries=3 CMD ["/roborock-mqtt-loxone", "--healthcheck", "http://127.0.0.1:8080/api/health"]
+HEALTHCHECK --interval=30s --timeout=6s --start-period=30s --retries=3 CMD ["/roborock-mqtt-loxone", "--healthcheck", "http://127.0.0.1:8080/api/live"]
 
 USER nonroot:nonroot
 

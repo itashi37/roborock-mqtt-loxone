@@ -69,3 +69,29 @@ func TestCommandCoordinatorRejectsUnknownInventoryAndOffline(t *testing.T) {
 		t.Fatalf("offline command was not rejected: %+v", result)
 	}
 }
+
+func TestCommandCoordinatorExposesInFlightDiagnostics(t *testing.T) {
+	release := make(chan struct{})
+	coordinator := NewCommandCoordinator(time.Second, time.Second,
+		func(string) (CommandContext, bool) { return CommandContext{Slug: "robot", Online: true}, true },
+		func(CommandContext, LoxoneCommand) error { <-release; return nil }, nil)
+	coordinator.UpdateStatus("robot", &PublishedStatus{State: "idle"}, time.Now())
+	result := coordinator.SubmitText("robot", "start")
+	if !result.Accepted {
+		t.Fatalf("command was not accepted: %+v", result)
+	}
+	deadline := time.Now().Add(time.Second)
+	for coordinator.Diagnostics().InFlight != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if diagnostics := coordinator.Diagnostics(); diagnostics.InFlight != 1 || diagnostics.Oldest.IsZero() {
+		t.Fatalf("unexpected in-flight diagnostics: %+v", diagnostics)
+	}
+	close(release)
+	for coordinator.Diagnostics().InFlight != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if diagnostics := coordinator.Diagnostics(); diagnostics.InFlight != 0 || diagnostics.LastCompleted.IsZero() {
+		t.Fatalf("unexpected completion diagnostics: %+v", diagnostics)
+	}
+}
