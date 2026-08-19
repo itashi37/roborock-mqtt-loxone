@@ -107,6 +107,10 @@ rollback path as a manual update is always used. Settings are versioned in
 `update-settings.json`, scheduler diagnostics in `autoupdate-state.json`, and
 the default publication delay is 24 hours.
 
+The lifecycle and transactional update contracts are platform-neutral. Docker
+is the current supervisor implementation; the remaining native-package work is
+documented in [Future Synology SPK packaging](docs/SYNOLOGY_SPK.md).
+
 ```bash
 git clone https://github.com/itashi37/roborock-mqtt-loxone.git
 cd roborock-mqtt-loxone

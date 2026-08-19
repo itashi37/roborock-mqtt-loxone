@@ -26,6 +26,7 @@ import (
 	"github.com/mqtt-home/roborock-mqtt/integration/watchdog"
 	loxonedirect "github.com/mqtt-home/roborock-mqtt/loxone/direct"
 	"github.com/mqtt-home/roborock-mqtt/roborock"
+	"github.com/mqtt-home/roborock-mqtt/supervisor"
 	"github.com/mqtt-home/roborock-mqtt/updater"
 	"github.com/mqtt-home/roborock-mqtt/version"
 	"github.com/mqtt-home/roborock-mqtt/web"
@@ -57,12 +58,12 @@ var (
 	integrationMu         sync.Mutex
 	healthPublisher       *bridgehealth.Publisher
 	watchdogMonitor       *watchdog.Monitor
-	watchdogExit          = make(chan string, 1)
 	watchdogRecovery      atomic.Bool
 	processStartedAt      = time.Now()
 	updateChecker         = updates.NewChecker(version.Version, version.GitCommit)
 	updaterClient         *updates.UpdaterClient
 	autoUpdateScheduler   *autoupdate.Scheduler
+	processSupervisor     *supervisor.Runtime
 )
 
 func automaticUpdateGuard() autoupdate.GuardState {
@@ -216,6 +217,9 @@ func systemStatusSnapshot() web.SystemStatus {
 	if autoUpdateScheduler != nil {
 		status.AutoUpdate = autoUpdateScheduler.Diagnostics()
 	}
+	if processSupervisor != nil {
+		status.Supervisor = processSupervisor.Status()
+	}
 	return status
 }
 
@@ -295,9 +299,8 @@ func startWatchdog(restClient *roborock.Client) {
 			Rebuild:   func(reason string) { runWatchdogRecovery("rebuild", reason, restClient) },
 			Reset:     func(reason string) { runWatchdogRecovery("reset", reason, restClient) },
 			Exit: func(reason string) {
-				select {
-				case watchdogExit <- reason:
-				default:
+				if processSupervisor != nil {
+					processSupervisor.RequestRestart(reason)
 				}
 			},
 		}, guard,
@@ -1301,6 +1304,7 @@ func main() {
 	// Data and session directories next to the config file
 	dataDir = filepath.Dir(configFile)
 	sessionDir := filepath.Join(dataDir, ".session")
+	processSupervisor = supervisor.NewRuntime(os.Getenv("ROBOROCK_SUPERVISOR"), dataDir)
 	if err := configureUpdaterClient(); err != nil {
 		logger.Warn("Manual updater client is unavailable", "error", err)
 	}
@@ -1405,7 +1409,7 @@ func main() {
 	exitCode := 0
 	select {
 	case <-quitChannel:
-	case reason := <-watchdogExit:
+	case reason := <-processSupervisor.RestartRequests():
 		exitCode = 2
 		logger.Error("Watchdog requested process restart", "reason", reason)
 	}

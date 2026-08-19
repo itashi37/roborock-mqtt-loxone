@@ -21,7 +21,7 @@ func main() {
 		return
 	}
 	service, err := updater.NewService(updater.Dependencies{
-		Engine:        updater.NewDockerEngine(environment("DOCKER_SOCKET", "/var/run/docker.sock")),
+		Supervisor:    updater.NewDockerEngine(environment("DOCKER_SOCKET", "/var/run/docker.sock")),
 		ContainerName: environment("BRIDGE_CONTAINER", "roborock-mqtt-loxone"),
 		HealthURL:     environment("BRIDGE_STATUS_URL", "http://roborock-mqtt-loxone:8080/api/system/status"),
 		DataDir:       environment("BRIDGE_DATA_DIR", "/bridge-data"),

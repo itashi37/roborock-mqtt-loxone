@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/mqtt-home/roborock-mqtt/supervisor"
 )
 
 const dockerAPIVersion = "v1.43"
@@ -53,7 +55,7 @@ type dockerInspect struct {
 	} `json:"NetworkSettings"`
 }
 
-func (d *DockerEngine) CurrentImage(ctx context.Context, container string) (string, error) {
+func (d *DockerEngine) CurrentArtifact(ctx context.Context, container string) (string, error) {
 	inspect, err := d.inspect(ctx, container)
 	if err != nil {
 		return "", err
@@ -65,7 +67,7 @@ func (d *DockerEngine) CurrentImage(ctx context.Context, container string) (stri
 	return image, nil
 }
 
-func (d *DockerEngine) Pull(ctx context.Context, image string) error {
+func (d *DockerEngine) Fetch(ctx context.Context, image string) error {
 	if !strings.HasPrefix(image, AllowedImage+":") {
 		return fmt.Errorf("image is outside the allowlist")
 	}
@@ -90,50 +92,48 @@ func (d *DockerEngine) Pull(ctx context.Context, image string) error {
 	return scanner.Err()
 }
 
-func (d *DockerEngine) Replace(ctx context.Context, container, image string) (replacement Replacement, returnErr error) {
+func (d *DockerEngine) Prepare(ctx context.Context, container, image string) (supervisor.Replacement, error) {
 	inspect, err := d.inspect(ctx, container)
 	if err != nil {
-		return replacement, err
+		return supervisor.Replacement{}, err
 	}
 	previousImage, _ := inspect.Config["Image"].(string)
-	replacement = Replacement{ContainerName: container, OldID: inspect.ID, PreviousImage: previousImage, OldName: container + "-rollback-" + time.Now().UTC().Format("20060102T150405")}
+	return supervisor.Replacement{ServiceName: container, PreviousInstance: inspect.ID, PreviousArtifact: previousImage, TargetArtifact: image, PreviousName: container + "-rollback-" + time.Now().UTC().Format("20060102T150405")}, nil
+}
+
+func (d *DockerEngine) Activate(ctx context.Context, replacement *supervisor.Replacement) error {
+	inspect, err := d.inspect(ctx, replacement.PreviousInstance)
+	if err != nil {
+		return err
+	}
 	if err := d.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(inspect.ID)+"/stop?t=20"); err != nil {
-		return replacement, err
+		return err
 	}
-	if err := d.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(inspect.ID)+"/rename?name="+url.QueryEscape(replacement.OldName)); err != nil {
+	if err := d.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(inspect.ID)+"/rename?name="+url.QueryEscape(replacement.PreviousName)); err != nil {
 		_ = d.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(inspect.ID)+"/start")
-		return replacement, err
+		return err
 	}
-	rollbackOnError := true
-	defer func() {
-		if returnErr != nil && rollbackOnError {
-			_ = d.simple(context.Background(), http.MethodPost, "/containers/"+url.PathEscape(inspect.ID)+"/rename?name="+url.QueryEscape(container))
-			_ = d.simple(context.Background(), http.MethodPost, "/containers/"+url.PathEscape(inspect.ID)+"/start")
-			replacement = Replacement{}
-		}
-	}()
-	inspect.Config["Image"] = image
+	inspect.Config["Image"] = replacement.TargetArtifact
 	endpoints := make(map[string]any, len(inspect.NetworkSettings.Networks))
 	for name, endpoint := range inspect.NetworkSettings.Networks {
 		endpoints[name] = endpoint
 	}
-	body := map[string]any{"Image": image, "HostConfig": inspect.HostConfig, "NetworkingConfig": map[string]any{"EndpointsConfig": endpoints}}
+	body := map[string]any{"Image": replacement.TargetArtifact, "HostConfig": inspect.HostConfig, "NetworkingConfig": map[string]any{"EndpointsConfig": endpoints}}
 	for key, value := range inspect.Config {
 		body[key] = value
 	}
 	var created struct {
 		ID string `json:"Id"`
 	}
-	if err := d.jsonRequest(ctx, http.MethodPost, "/containers/create?name="+url.QueryEscape(container), body, &created); err != nil {
-		return replacement, err
+	if err := d.jsonRequest(ctx, http.MethodPost, "/containers/create?name="+url.QueryEscape(replacement.ServiceName), body, &created); err != nil {
+		return err
 	}
-	replacement.NewID = created.ID
+	replacement.NewInstance = created.ID
 	if err := d.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(created.ID)+"/start"); err != nil {
 		_ = d.simple(context.Background(), http.MethodDelete, "/containers/"+url.PathEscape(created.ID)+"?force=true")
-		return replacement, err
+		return err
 	}
-	rollbackOnError = false
-	return replacement, nil
+	return nil
 }
 
 func (d *DockerEngine) WaitHealthy(ctx context.Context, container string, timeout time.Duration) error {
@@ -185,21 +185,30 @@ func (d *DockerEngine) VerifyVersion(ctx context.Context, endpoint, expected str
 	return nil
 }
 
-func (d *DockerEngine) Rollback(ctx context.Context, replacement Replacement) error {
-	if replacement.NewID != "" {
-		_ = d.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(replacement.NewID)+"/stop?t=10")
-		if err := d.simple(ctx, http.MethodDelete, "/containers/"+url.PathEscape(replacement.NewID)+"?force=true"); err != nil {
+func (d *DockerEngine) Rollback(ctx context.Context, replacement supervisor.Replacement) error {
+	if current, err := d.inspect(ctx, replacement.ServiceName); err == nil && current.ID != replacement.PreviousInstance {
+		_ = d.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(current.ID)+"/stop?t=10")
+		if err := d.simple(ctx, http.MethodDelete, "/containers/"+url.PathEscape(current.ID)+"?force=true"); err != nil {
 			return err
 		}
 	}
-	if err := d.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(replacement.OldID)+"/rename?name="+url.QueryEscape(replacement.ContainerName)); err != nil {
+	previous, err := d.inspect(ctx, replacement.PreviousInstance)
+	if err != nil {
 		return err
 	}
-	return d.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(replacement.OldID)+"/start")
+	if strings.TrimPrefix(previous.Name, "/") != replacement.ServiceName {
+		if err := d.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(replacement.PreviousInstance)+"/rename?name="+url.QueryEscape(replacement.ServiceName)); err != nil {
+			return err
+		}
+	}
+	if previous.State.Running {
+		return nil
+	}
+	return d.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(replacement.PreviousInstance)+"/start")
 }
 
-func (d *DockerEngine) Finalize(ctx context.Context, replacement Replacement) error {
-	return d.simple(ctx, http.MethodDelete, "/containers/"+url.PathEscape(replacement.OldID)+"?force=true")
+func (d *DockerEngine) Finalize(ctx context.Context, replacement supervisor.Replacement) error {
+	return d.simple(ctx, http.MethodDelete, "/containers/"+url.PathEscape(replacement.PreviousInstance)+"?force=true")
 }
 
 func (d *DockerEngine) inspect(ctx context.Context, container string) (dockerInspect, error) {

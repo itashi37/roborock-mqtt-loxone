@@ -106,6 +106,7 @@ export function SystemUpdatesPage({ returnSlug }: { returnSlug?: string }) {
         <KeyValue label="Build time" value={formatDate(status.build_time)} />
         <KeyValue label="Last restart" value={formatDate(status.last_restart)} />
         <KeyValue label="Watchdog" value={status.last_watchdog_reason || 'No recovery recorded'} />
+        <KeyValue label="Supervisor" value={`${status.supervisor.kind} · ${status.supervisor.log_mode}`} />
       </Card>
 
       <Card title="Transports" icon={<Wifi className="h-5 w-5" />}>

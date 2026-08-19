@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mqtt-home/roborock-mqtt/supervisor"
 )
 
 type fakeEngine struct {
@@ -18,26 +20,40 @@ type fakeEngine struct {
 	healthError   error
 	versionError  error
 	rollbackError error
+	prepared      int
+	activated     int
 	rolledBack    int
 	finalized     int
 }
 
-func (f *fakeEngine) CurrentImage(context.Context, string) (string, error) {
+func (f *fakeEngine) CurrentArtifact(context.Context, string) (string, error) {
 	return AllowedImage + ":v1.0.0", nil
 }
-func (f *fakeEngine) Pull(context.Context, string) error { return f.pullError }
-func (f *fakeEngine) Replace(context.Context, string, string) (Replacement, error) {
-	return Replacement{ContainerName: "bridge", OldID: "old", NewID: "new", PreviousImage: AllowedImage + ":v1.0.0"}, f.replaceError
+func (f *fakeEngine) Fetch(context.Context, string) error { return f.pullError }
+func (f *fakeEngine) Prepare(context.Context, string, string) (supervisor.Replacement, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.prepared++
+	return supervisor.Replacement{ServiceName: "bridge", PreviousInstance: "old", PreviousName: "bridge-rollback", PreviousArtifact: AllowedImage + ":v1.0.0", TargetArtifact: AllowedImage + ":v1.1.0"}, nil
+}
+func (f *fakeEngine) Activate(_ context.Context, replacement *supervisor.Replacement) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.activated++
+	if f.replaceError == nil {
+		replacement.NewInstance = "new"
+	}
+	return f.replaceError
 }
 func (f *fakeEngine) WaitHealthy(context.Context, string, time.Duration) error { return f.healthError }
 func (f *fakeEngine) VerifyVersion(context.Context, string, string) error      { return f.versionError }
-func (f *fakeEngine) Rollback(context.Context, Replacement) error {
+func (f *fakeEngine) Rollback(context.Context, supervisor.Replacement) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rolledBack++
 	return f.rollbackError
 }
-func (f *fakeEngine) Finalize(context.Context, Replacement) error {
+func (f *fakeEngine) Finalize(context.Context, supervisor.Replacement) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.finalized++
@@ -47,7 +63,7 @@ func (f *fakeEngine) Finalize(context.Context, Replacement) error {
 func testService(t *testing.T, engine *fakeEngine, free uint64, registryError error) *Service {
 	t.Helper()
 	service, err := NewService(Dependencies{
-		Engine: engine, DataDir: t.TempDir(), HealthURL: "http://bridge/api/system/status", MinimumFree: 100,
+		Supervisor: engine, DataDir: t.TempDir(), HealthURL: "http://bridge/api/system/status", MinimumFree: 100,
 		FreeBytes:     func(string) (uint64, error) { return free, nil },
 		RegistryCheck: func(context.Context) error { return registryError },
 		Backup:        func(_, id string) (string, error) { return "backup-" + id, nil },
@@ -123,20 +139,50 @@ func TestUpdaterRestartMarksInterruptedOperationFailed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, "update-operation.json"), []byte(state), 0600); err != nil {
 		t.Fatal(err)
 	}
-	service, err := NewService(Dependencies{Engine: &fakeEngine{}, DataDir: directory})
+	service, err := NewService(Dependencies{Supervisor: &fakeEngine{}, DataDir: directory})
 	if err != nil {
 		t.Fatal(err)
 	}
 	operation := service.Status()
-	if operation.Stage != StageFailed || !strings.Contains(operation.Error, "restarted") {
+	if operation.Stage != StageFailed || !strings.Contains(operation.Error, "before service replacement") {
 		t.Fatalf("operation=%+v", operation)
+	}
+}
+
+func TestUpdaterRestartRollsBackPersistedReplacement(t *testing.T) {
+	directory := t.TempDir()
+	state := `{"id":"old-request","stage":"restarting","tag":"v1.1.0"}`
+	transaction := `{"service_name":"bridge","previous_instance":"old","previous_name":"bridge-rollback","new_instance":"new","previous_artifact":"ghcr.io/itashi37/roborock-mqtt-loxone:v1.0.0","target_artifact":"ghcr.io/itashi37/roborock-mqtt-loxone:v1.1.0"}`
+	if err := os.WriteFile(filepath.Join(directory, "update-operation.json"), []byte(state), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "update-transaction.json"), []byte(transaction), 0600); err != nil {
+		t.Fatal(err)
+	}
+	engine := &fakeEngine{}
+	service, err := NewService(Dependencies{Supervisor: engine, DataDir: directory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation := service.Status()
+	if operation.Stage != StageFailed || !strings.Contains(operation.Error, "previous service was restored") {
+		t.Fatalf("operation=%+v", operation)
+	}
+	engine.mu.Lock()
+	rolledBack := engine.rolledBack
+	engine.mu.Unlock()
+	if rolledBack != 1 {
+		t.Fatalf("rollback calls=%d, want 1", rolledBack)
+	}
+	if _, err := os.Stat(filepath.Join(directory, "update-transaction.json")); !os.IsNotExist(err) {
+		t.Fatalf("transaction journal still exists: %v", err)
 	}
 }
 
 func TestRequestIDReplayIsRejectedAfterRestart(t *testing.T) {
 	directory := t.TempDir()
 	dependencies := Dependencies{
-		Engine: &fakeEngine{}, DataDir: directory, MinimumFree: 1,
+		Supervisor: &fakeEngine{}, DataDir: directory, MinimumFree: 1,
 		FreeBytes:     func(string) (uint64, error) { return 100, nil },
 		RegistryCheck: func(context.Context) error { return nil },
 		Backup:        func(_, id string) (string, error) { return "backup-" + id, nil },

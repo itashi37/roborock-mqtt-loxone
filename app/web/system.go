@@ -11,6 +11,7 @@ import (
 	"github.com/mqtt-home/roborock-mqtt/integration/autoupdate"
 	"github.com/mqtt-home/roborock-mqtt/integration/updates"
 	"github.com/mqtt-home/roborock-mqtt/integration/watchdog"
+	"github.com/mqtt-home/roborock-mqtt/supervisor"
 	"github.com/mqtt-home/roborock-mqtt/updater"
 )
 
@@ -46,6 +47,7 @@ type SystemStatus struct {
 	Update             updates.Info                     `json:"update"`
 	UpdateSettings     config.UpdateConfig              `json:"update_settings"`
 	AutoUpdate         autoupdate.Diagnostics           `json:"auto_update"`
+	Supervisor         supervisor.RuntimeStatus         `json:"supervisor"`
 }
 
 type SystemDependencies struct {

@@ -14,6 +14,7 @@ services:
       - "${ROBOROCK_DATA_DIR:-roborock-data}:/var/lib/roborock-mqtt-loxone"
     environment:
       TZ: "${TZ:-Europe/Paris}"
+      ROBOROCK_SUPERVISOR: "${ROBOROCK_SUPERVISOR:-docker}"
     networks:
       - roborock
 

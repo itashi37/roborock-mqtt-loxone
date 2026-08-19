@@ -50,6 +50,7 @@ export interface SystemStatus {
   update: UpdateInfo;
   update_settings: UpdateSettings;
   auto_update: AutoUpdateDiagnostics;
+  supervisor: { kind: string; data_dir: string; log_mode: string; restart_supported: boolean };
 }
 
 export interface UpdateSettings {

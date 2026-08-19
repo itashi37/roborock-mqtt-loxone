@@ -115,7 +115,7 @@ func Assess(observation Observation, cfg Config) Report {
 	}
 	sort.Strings(reasons)
 	live := components["process"].Healthy && loopHealthy && dispatcherHealthy && queueHealthy
-	ready := live && observation.Authenticated && observation.BridgeStarted && observation.CloudConnected && components["local_mqtt"].Healthy && components["direct_loxone"].Healthy
+	ready := live && observation.Authenticated && observation.BridgeStarted && len(reasons) == 0
 	status := "healthy"
 	if !live {
 		status = "unhealthy"
@@ -239,7 +239,7 @@ func (m *Monitor) Step(now time.Time) Report {
 	needsRecovery := !report.Live || (observation.BridgeStarted && !observation.CloudConnected) ||
 		(observation.LocalMQTTEnabled && !observation.LocalMQTTConnected) ||
 		(observation.DirectEnabled && (observation.DirectPending > m.cfg.MaxQueueDepth || observation.DirectLastError != "")) ||
-		contains(report.Reasons, "cloud") || contains(report.Reasons, "robot_updates")
+		contains(report.Reasons, "cloud") || contains(report.Reasons, "robot_updates") || contains(report.Reasons, "direct_loxone")
 
 	m.mu.Lock()
 	defer m.mu.Unlock()

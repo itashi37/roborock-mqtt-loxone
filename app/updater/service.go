@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mqtt-home/roborock-mqtt/supervisor"
 )
 
 const AllowedImage = "ghcr.io/itashi37/roborock-mqtt-loxone"
@@ -54,51 +56,35 @@ type Request struct {
 	ExpectedVersion string `json:"expected_version"`
 }
 
-type Replacement struct {
-	ContainerName string
-	OldID         string
-	OldName       string
-	NewID         string
-	PreviousImage string
-}
-
-type Engine interface {
-	CurrentImage(context.Context, string) (string, error)
-	Pull(context.Context, string) error
-	Replace(context.Context, string, string) (Replacement, error)
-	WaitHealthy(context.Context, string, time.Duration) error
-	VerifyVersion(context.Context, string, string) error
-	Rollback(context.Context, Replacement) error
-	Finalize(context.Context, Replacement) error
-}
-
 type Dependencies struct {
-	Engine        Engine
-	ContainerName string
-	HealthURL     string
-	DataDir       string
-	MinimumFree   uint64
-	HealthTimeout time.Duration
-	FreeBytes     func(string) (uint64, error)
-	RegistryCheck func(context.Context) error
-	Backup        func(string, string) (string, error)
-	Now           func() time.Time
+	Supervisor     supervisor.UpdateSupervisor
+	ContainerName  string
+	HealthURL      string
+	DataDir        string
+	MinimumFree    uint64
+	HealthTimeout  time.Duration
+	FreeBytes      func(string) (uint64, error)
+	RegistryCheck  func(context.Context) error
+	Backup         func(string, string) (string, error)
+	Now            func() time.Time
+	TargetArtifact func(string) (string, error)
 }
 
 type Service struct {
-	dependencies Dependencies
-	mu           sync.RWMutex
-	operation    Operation
-	running      bool
-	statePath    string
-	usedPath     string
-	usedIDs      []string
-	usedSet      map[string]struct{}
+	dependencies    Dependencies
+	mu              sync.RWMutex
+	operation       Operation
+	running         bool
+	statePath       string
+	usedPath        string
+	transactionPath string
+	usedIDs         []string
+	usedSet         map[string]struct{}
 }
 
 func NewService(dependencies Dependencies) (*Service, error) {
-	if dependencies.Engine == nil {
-		return nil, fmt.Errorf("Docker engine is required")
+	if dependencies.Supervisor == nil {
+		return nil, fmt.Errorf("update supervisor is required")
 	}
 	if dependencies.ContainerName == "" {
 		dependencies.ContainerName = "roborock-mqtt-loxone"
@@ -115,6 +101,14 @@ func NewService(dependencies Dependencies) (*Service, error) {
 	if dependencies.Now == nil {
 		dependencies.Now = time.Now
 	}
+	if dependencies.TargetArtifact == nil {
+		dependencies.TargetArtifact = func(tag string) (string, error) {
+			if !allowedTag.MatchString(tag) {
+				return "", fmt.Errorf("tag is not allowed")
+			}
+			return AllowedImage + ":" + tag, nil
+		}
+	}
 	if dependencies.FreeBytes == nil {
 		dependencies.FreeBytes = FilesystemFreeBytes
 	}
@@ -124,7 +118,7 @@ func NewService(dependencies Dependencies) (*Service, error) {
 	if dependencies.Backup == nil {
 		dependencies.Backup = BackupData
 	}
-	service := &Service{dependencies: dependencies, operation: Operation{Stage: StageIdle}, statePath: filepath.Join(dependencies.DataDir, "update-operation.json"), usedPath: filepath.Join(dependencies.DataDir, "update-request-ids.json"), usedSet: make(map[string]struct{})}
+	service := &Service{dependencies: dependencies, operation: Operation{Stage: StageIdle}, statePath: filepath.Join(dependencies.DataDir, "update-operation.json"), usedPath: filepath.Join(dependencies.DataDir, "update-request-ids.json"), transactionPath: filepath.Join(dependencies.DataDir, "update-transaction.json"), usedSet: make(map[string]struct{})}
 	if data, err := os.ReadFile(service.usedPath); err == nil {
 		_ = json.Unmarshal(data, &service.usedIDs)
 		for _, id := range service.usedIDs {
@@ -134,14 +128,37 @@ func NewService(dependencies Dependencies) (*Service, error) {
 	if data, err := os.ReadFile(service.statePath); err == nil {
 		_ = json.Unmarshal(data, &service.operation)
 		if !terminal(service.operation.Stage) {
-			service.operation.Stage = StageFailed
-			service.operation.Error = "updater restarted during an incomplete operation; inspect the bridge before retrying"
-			service.operation.UpdatedAt = dependencies.Now().UTC()
-			service.operation.CompletedAt = service.operation.UpdatedAt
-			_ = service.persistLocked()
+			service.recoverInterrupted()
 		}
 	}
 	return service, nil
+}
+
+func (s *Service) recoverInterrupted() {
+	var replacement supervisor.Replacement
+	data, readErr := os.ReadFile(s.transactionPath)
+	if readErr == nil && json.Unmarshal(data, &replacement) == nil && replacement.PreviousInstance != "" {
+		s.operation.Stage = StageRollback
+		s.operation.UpdatedAt = s.dependencies.Now().UTC()
+		_ = s.persistLocked()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		err := s.dependencies.Supervisor.Rollback(ctx, replacement)
+		cancel()
+		s.operation.Stage = StageFailed
+		s.operation.Error = "updater restarted during replacement; the previous service was restored"
+		if err != nil {
+			s.operation.Error = "updater restarted during replacement"
+			s.operation.RollbackError = redactError(err)
+		} else {
+			_ = os.Remove(s.transactionPath)
+		}
+	} else {
+		s.operation.Stage = StageFailed
+		s.operation.Error = "updater restarted during an incomplete operation before service replacement"
+	}
+	s.operation.UpdatedAt = s.dependencies.Now().UTC()
+	s.operation.CompletedAt = s.operation.UpdatedAt
+	_ = s.persistLocked()
 }
 
 func (s *Service) Status() Operation {
@@ -175,7 +192,12 @@ func (s *Service) Start(request Request) (Operation, error) {
 		return operation, fmt.Errorf("request_id has already been used")
 	}
 	now := s.dependencies.Now().UTC()
-	s.operation = Operation{ID: request.RequestID, Stage: StagePreparing, Tag: request.Tag, ExpectedVersion: request.ExpectedVersion, TargetImage: AllowedImage + ":" + request.Tag, StartedAt: now, UpdatedAt: now}
+	targetArtifact, err := s.dependencies.TargetArtifact(request.Tag)
+	if err != nil {
+		s.mu.Unlock()
+		return Operation{}, err
+	}
+	s.operation = Operation{ID: request.RequestID, Stage: StagePreparing, Tag: request.Tag, ExpectedVersion: request.ExpectedVersion, TargetImage: targetArtifact, StartedAt: now, UpdatedAt: now}
 	s.usedIDs = append(s.usedIDs, request.RequestID)
 	if len(s.usedIDs) > 50 {
 		delete(s.usedSet, s.usedIDs[0])
@@ -193,12 +215,12 @@ func (s *Service) Start(request Request) (Operation, error) {
 
 func (s *Service) run(operation Operation) {
 	ctx := context.Background()
-	var replacement Replacement
+	var replacement supervisor.Replacement
 	fail := func(err error, rollback bool) {
 		message := redactError(err)
-		if rollback && replacement.OldID != "" {
+		if rollback && replacement.PreviousInstance != "" {
 			s.setStage(StageRollback, "")
-			if rollbackErr := s.dependencies.Engine.Rollback(ctx, replacement); rollbackErr != nil {
+			if rollbackErr := s.dependencies.Supervisor.Rollback(ctx, replacement); rollbackErr != nil {
 				s.finish(StageFailed, message, redactError(rollbackErr))
 				return
 			}
@@ -219,7 +241,7 @@ func (s *Service) run(operation Operation) {
 		fail(fmt.Errorf("registry unavailable: %w", err), false)
 		return
 	}
-	previous, err := s.dependencies.Engine.CurrentImage(ctx, s.dependencies.ContainerName)
+	previous, err := s.dependencies.Supervisor.CurrentArtifact(ctx, s.dependencies.ContainerName)
 	if err != nil {
 		fail(fmt.Errorf("inspect current bridge: %w", err), false)
 		return
@@ -227,7 +249,7 @@ func (s *Service) run(operation Operation) {
 	s.update(func(current *Operation) { current.PreviousImage = previous })
 
 	s.setStage(StagePulling, "")
-	if err := s.dependencies.Engine.Pull(ctx, operation.TargetImage); err != nil {
+	if err := s.dependencies.Supervisor.Fetch(ctx, operation.TargetImage); err != nil {
 		fail(fmt.Errorf("pull target image: %w", err), false)
 		return
 	}
@@ -241,22 +263,31 @@ func (s *Service) run(operation Operation) {
 	s.update(func(current *Operation) { current.BackupPath = backupPath })
 
 	s.setStage(StageRestarting, "")
-	replacement, err = s.dependencies.Engine.Replace(ctx, s.dependencies.ContainerName, operation.TargetImage)
+	replacement, err = s.dependencies.Supervisor.Prepare(ctx, s.dependencies.ContainerName, operation.TargetImage)
 	if err != nil {
-		fail(fmt.Errorf("replace bridge container: %w", err), replacement.OldID != "")
+		fail(fmt.Errorf("prepare bridge replacement: %w", err), false)
 		return
 	}
+	if err := s.persistTransaction(replacement); err != nil {
+		fail(fmt.Errorf("persist update transaction: %w", err), false)
+		return
+	}
+	if err := s.dependencies.Supervisor.Activate(ctx, &replacement); err != nil {
+		fail(fmt.Errorf("activate bridge replacement: %w", err), true)
+		return
+	}
+	_ = s.persistTransaction(replacement)
 
 	s.setStage(StageValidating, "")
-	if err := s.dependencies.Engine.WaitHealthy(ctx, s.dependencies.ContainerName, s.dependencies.HealthTimeout); err != nil {
+	if err := s.dependencies.Supervisor.WaitHealthy(ctx, s.dependencies.ContainerName, s.dependencies.HealthTimeout); err != nil {
 		fail(fmt.Errorf("new bridge is unhealthy: %w", err), true)
 		return
 	}
-	if err := s.dependencies.Engine.VerifyVersion(ctx, s.dependencies.HealthURL, operation.ExpectedVersion); err != nil {
+	if err := s.dependencies.Supervisor.VerifyVersion(ctx, s.dependencies.HealthURL, operation.ExpectedVersion); err != nil {
 		fail(fmt.Errorf("new bridge version mismatch: %w", err), true)
 		return
 	}
-	if err := s.dependencies.Engine.Finalize(ctx, replacement); err != nil {
+	if err := s.dependencies.Supervisor.Finalize(ctx, replacement); err != nil {
 		fail(fmt.Errorf("finalize update: %w", err), true)
 		return
 	}
@@ -282,7 +313,22 @@ func (s *Service) finish(stage Stage, errorMessage, rollbackError string) {
 	s.operation.UpdatedAt, s.operation.CompletedAt = now, now
 	s.running = false
 	_ = s.persistLocked()
+	if rollbackError == "" {
+		_ = os.Remove(s.transactionPath)
+	}
 	s.mu.Unlock()
+}
+
+func (s *Service) persistTransaction(replacement supervisor.Replacement) error {
+	data, err := json.MarshalIndent(replacement, "", "  ")
+	if err != nil {
+		return err
+	}
+	temporary := s.transactionPath + ".tmp-" + randomSuffix()
+	if err := os.WriteFile(temporary, append(data, '\n'), 0600); err != nil {
+		return err
+	}
+	return os.Rename(temporary, s.transactionPath)
 }
 
 func (s *Service) persistLocked() error {
