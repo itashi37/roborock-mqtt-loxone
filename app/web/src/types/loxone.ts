@@ -91,6 +91,9 @@ export interface LoxoneRobot {
   diagnostics: LoxoneDiagnostics;
   capabilities: RobotCapabilities;
   health: DeviceHealth;
+  active_program?: string;
+  active_scene_id?: number;
+  active_scene_name?: string;
   direct_inputs?: LoxoneDirectInput[];
   direct_outputs?: LoxoneDirectOutput[];
 }

@@ -1095,8 +1095,10 @@ func executeCommand(dev *roborock.ManagedDevice, action string, segments []int, 
 		err = dev.CloudMQTT.SetDryerEnabled(false)
 	case "segment_clean":
 		logger.Info("Starting segment clean", "device", dev.Slug, "segments", segments)
-		deviceManager.NoteSegmentClean(dev.Slug, segments)
 		err = dev.CloudMQTT.SegmentClean(segments)
+		if err == nil {
+			deviceManager.NoteSegmentClean(dev.Slug, segments)
+		}
 	case "set_fan_speed":
 		logger.Info("Setting fan speed", "device", dev.Slug, "speed", speed)
 		err = dev.CloudMQTT.SetFanSpeed(speed)
@@ -1108,8 +1110,10 @@ func executeCommand(dev *roborock.ManagedDevice, action string, segments []int, 
 		err = dev.CloudMQTT.SetWaterBox(level)
 	case "scene":
 		logger.Info("Executing scene", "device", dev.Slug, "sceneID", sceneID)
-		deviceManager.NoteSceneStarted(dev.Slug, sceneID)
 		err = deviceManager.ExecuteScene(sceneID)
+		if err == nil {
+			deviceManager.NoteSceneStarted(dev.Slug, sceneID)
+		}
 	default:
 		return fmt.Errorf("unknown action %q", action)
 	}

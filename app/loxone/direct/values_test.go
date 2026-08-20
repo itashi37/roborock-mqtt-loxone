@@ -11,10 +11,12 @@ func TestValuesForStateUsesCorrectLoxoneTypesAndUnits(t *testing.T) {
 	state := roborock.InternalDeviceState{
 		Slug: "salon", Online: true, RobotOnline: true, UpdatedAt: time.Unix(1700000000, 0),
 		CurrentRoom: &roborock.CurrentRoom{ID: 23, Name: "Cuisine"},
+		Scenes:      []roborock.Scene{{ID: 42, Name: "Après les repas"}},
 		Status: &roborock.PublishedStatus{
 			State: "washing_mop", Battery: 82, ErrorCode: 7, Error: "Blocked",
 			CleanArea: 12_500_000, CleanTime: 321,
 			ConsumablePercents: roborock.ConsumablePercents{MainBrush: 90, SideBrush: 80, Filter: 70, Sensor: 60},
+			Program:            func() *string { value := "scene:42"; return &value }(),
 		},
 	}
 	values := ValuesForState(state, InputMapping{Prefix: "RR"})
@@ -29,6 +31,8 @@ func TestValuesForStateUsesCorrectLoxoneTypesAndUnits(t *testing.T) {
 		"online": {"1", Digital}, "robot_online": {"1", Digital}, "battery": {"82", Analog},
 		"state": {"14", Analog}, "state_text": {"washing_mop", Text},
 		"current_room_name": {"Cuisine", Text}, "clean_area": {"12.50", Analog},
+		"active_program": {"scene", Text}, "active_scene_id": {"42", Analog},
+		"active_scene_name":  {"Après les repas", Text},
 		"clean_time_seconds": {"321", Analog}, "last_seen": {"1700000000", Analog},
 	}
 	for field, check := range checks {
@@ -38,6 +42,17 @@ func TestValuesForStateUsesCorrectLoxoneTypesAndUnits(t *testing.T) {
 	}
 	if byField["battery"].Input != "RR_salon_battery" {
 		t.Fatalf("unexpected default input: %s", byField["battery"].Input)
+	}
+}
+
+func TestValuesForStateClearsActiveSceneAfterCleaning(t *testing.T) {
+	values := ValuesForState(roborock.InternalDeviceState{Slug: "robot", UpdatedAt: time.Unix(1, 0), Status: &roborock.PublishedStatus{}}, InputMapping{})
+	byField := make(map[string]StateValue)
+	for _, value := range values {
+		byField[value.Field] = value
+	}
+	if byField["active_program"].Value != "" || byField["active_scene_id"].Value != "0" || byField["active_scene_name"].Value != "" {
+		t.Fatalf("active scene was not cleared: %+v", byField)
 	}
 }
 

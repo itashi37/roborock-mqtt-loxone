@@ -83,6 +83,9 @@ type loxoneRobotResponse struct {
 	Diagnostics   roborock.LoxoneDiagnostics  `json:"diagnostics"`
 	Capabilities  roborock.DeviceCapabilities `json:"capabilities"`
 	Health        roborock.DeviceHealth       `json:"health"`
+	ActiveProgram string                      `json:"active_program,omitempty"`
+	ActiveSceneID int                         `json:"active_scene_id,omitempty"`
+	ActiveScene   string                      `json:"active_scene_name,omitempty"`
 	DirectInputs  []loxoneDirectInput         `json:"direct_inputs,omitempty"`
 	DirectOutputs []loxoneDirectOutput        `json:"direct_outputs,omitempty"`
 }
@@ -217,6 +220,10 @@ func (ws *WebServer) buildLoxoneRobot(device *roborock.ManagedDevice) loxoneRobo
 	for _, scene := range device.Scenes {
 		robot.Scenes = append(robot.Scenes, loxoneSceneResponse{ID: scene.ID, Name: scene.Name, Command: fmt.Sprintf("scene_id:%d", scene.ID)})
 	}
+	active := roborock.ResolveActiveProgram(device.GetStatus(), device.Scenes)
+	robot.ActiveProgram = active.Kind
+	robot.ActiveSceneID = active.SceneID
+	robot.ActiveScene = active.SceneName
 	sort.Slice(robot.Scenes, func(i, j int) bool {
 		return strings.ToLower(robot.Scenes[i].Name) < strings.ToLower(robot.Scenes[j].Name)
 	})

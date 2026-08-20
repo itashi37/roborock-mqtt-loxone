@@ -239,6 +239,10 @@ with `loxone.direct.inputs`. Failed values are retried without blocking
 Roborock polling; `POST /api/loxone/direct/resend` queues a full resync. Dock
 service fields are added only when that robot actually reports them. Capability
 detection uses status/feature evidence, never a commercial model-name guess.
+While cleaning, Direct Loxone also exposes `active_program`, `active_scene_id`
+and `active_scene_name`. A scene ID/name is published only when the bridge
+triggered and positively associated that scene with the current run; externally
+started cleaning is labelled by its known program type without guessing a scene.
 
 ### Direct Loxone command API
 

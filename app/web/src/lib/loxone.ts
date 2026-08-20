@@ -106,6 +106,7 @@ export function directCommandURL(connectorAddress: string, path: string): string
 const directInputLabels: Record<string, string> = {
   online: 'En ligne', battery: 'Batterie', state: 'État (code)', state_text: 'État (texte)',
   current_room_id: 'Pièce actuelle (ID)', current_room_name: 'Pièce actuelle',
+  active_program: 'Programme actif', active_scene_id: 'Scène active (ID)', active_scene_name: 'Scène active',
   error_code: 'Erreur (code)', error_text: 'Erreur (texte)', clean_area: 'Surface nettoyée',
   clean_time_seconds: 'Temps de nettoyage', last_seen: 'Dernière mise à jour',
   main_brush: 'Brosse principale', side_brush: 'Brosse latérale', filter: 'Filtre', sensor: 'Capteurs',

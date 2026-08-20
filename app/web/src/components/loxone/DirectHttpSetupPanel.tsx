@@ -14,6 +14,7 @@ interface Props {
 const inputLabels: Record<string, string> = {
   online: 'Roborock cloud transport connected', robot_online: 'Robot responding to status polling', battery: 'Battery percentage', state: 'Stable numeric state code',
   state_text: 'Readable robot state', current_room_id: 'Current segment ID', current_room_name: 'Current room name',
+  active_program: 'Current cleaning program type', active_scene_id: 'Current bridge-triggered scene ID', active_scene_name: 'Current bridge-triggered scene name',
   error_code: 'Roborock error code', error_text: 'Readable error', clean_area: 'Cleaned area in m²',
   clean_time_seconds: 'Cleaning time in seconds', last_seen: 'Last update as Unix timestamp',
   main_brush: 'Main brush remaining', side_brush: 'Side brush remaining', filter: 'Filter remaining',

@@ -129,11 +129,8 @@ func parseBlock(md *MapData, blockType int, header []byte, data []byte) {
 
 	switch blockType {
 	case BlockCharger:
-		if len(header) >= 16 {
-			md.Charger = &MapPosition{
-				X: int(binary.LittleEndian.Uint32(header[8:12])),
-				Y: int(binary.LittleEndian.Uint32(header[12:16])),
-			}
+		if position := parseObjectPosition(header, data); position != nil {
+			md.Charger = position
 			db.Points = []MapPoint{{X: md.Charger.X, Y: md.Charger.Y}}
 		}
 	case BlockImage:
@@ -141,14 +138,8 @@ func parseBlock(md *MapData, blockType int, header []byte, data []byte) {
 	case BlockVacuumPath:
 		parsPathBlock(md, header, data)
 	case BlockRobotPosition:
-		if len(header) >= 16 {
-			md.Robot = &MapPosition{
-				X: int(binary.LittleEndian.Uint32(header[8:12])),
-				Y: int(binary.LittleEndian.Uint32(header[12:16])),
-			}
-			if len(header) >= 20 {
-				md.Robot.Angle = int(binary.LittleEndian.Uint32(header[16:20]))
-			}
+		if position := parseObjectPosition(header, data); position != nil {
+			md.Robot = position
 			db.Points = []MapPoint{{X: md.Robot.X, Y: md.Robot.Y}}
 		}
 	case BlockMapBlocks:
@@ -177,6 +168,30 @@ func parseBlock(md *MapData, blockType int, header []byte, data []byte) {
 	}
 
 	md.DebugBlocks = append(md.DebugBlocks, db)
+}
+
+// parseObjectPosition decodes charger and robot position blocks. Current
+// Roborock maps store X, Y and the optional angle in the block payload, while
+// older maps observed by this project embedded them after the generic header.
+// Prefer the documented payload layout and retain the legacy fallback so a
+// newer robot fix does not regress existing installations.
+func parseObjectPosition(header, data []byte) *MapPosition {
+	positionData := data
+	if len(positionData) < 8 {
+		if len(header) < 16 {
+			return nil
+		}
+		positionData = header[8:]
+	}
+
+	position := &MapPosition{
+		X: int(int32(binary.LittleEndian.Uint32(positionData[0:4]))),
+		Y: int(int32(binary.LittleEndian.Uint32(positionData[4:8]))),
+	}
+	if len(positionData) >= 12 {
+		position.Angle = int(int32(binary.LittleEndian.Uint32(positionData[8:12])))
+	}
+	return position
 }
 
 // tryParseCoordinates attempts to extract coordinate pairs from block data.
@@ -271,10 +286,10 @@ func parsPathBlock(md *MapData, header []byte, data []byte) {
 type PixelType int
 
 const (
-	PixelEmpty   PixelType = 0
-	PixelWall    PixelType = 1
-	PixelFloor   PixelType = 2
-	PixelRoom    PixelType = 3
+	PixelEmpty PixelType = 0
+	PixelWall  PixelType = 1
+	PixelFloor PixelType = 2
+	PixelRoom  PixelType = 3
 )
 
 // ClassifyPixel determines the type and room ID of a Roborock map pixel.

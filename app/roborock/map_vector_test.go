@@ -1,11 +1,64 @@
 package roborock
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"reflect"
 	"sort"
 	"testing"
 )
+
+func positionBytes(x, y, angle int32) []byte {
+	data := make([]byte, 12)
+	binary.LittleEndian.PutUint32(data[0:4], uint32(x))
+	binary.LittleEndian.PutUint32(data[4:8], uint32(y))
+	binary.LittleEndian.PutUint32(data[8:12], uint32(angle))
+	return data
+}
+
+func TestParsePositionBlocksFromPayload(t *testing.T) {
+	mapData := &MapData{}
+	shortHeader := make([]byte, 8)
+	parseBlock(mapData, BlockRobotPosition, shortHeader, positionBytes(6450, 13450, -45))
+	parseBlock(mapData, BlockCharger, shortHeader, positionBytes(6100, 13000, 90))
+
+	if mapData.Robot == nil || mapData.Robot.X != 6450 || mapData.Robot.Y != 13450 || mapData.Robot.Angle != -45 {
+		t.Fatalf("robot position = %+v, want payload coordinates", mapData.Robot)
+	}
+	if mapData.Charger == nil || mapData.Charger.X != 6100 || mapData.Charger.Y != 13000 || mapData.Charger.Angle != 90 {
+		t.Fatalf("charger position = %+v, want payload coordinates", mapData.Charger)
+	}
+}
+
+func TestParsePositionBlockRetainsLegacyHeaderFallback(t *testing.T) {
+	header := append(make([]byte, 8), positionBytes(5000, 7500, 180)...)
+	mapData := &MapData{}
+	parseBlock(mapData, BlockRobotPosition, header, nil)
+
+	if mapData.Robot == nil || mapData.Robot.X != 5000 || mapData.Robot.Y != 7500 || mapData.Robot.Angle != 180 {
+		t.Fatalf("robot position = %+v, want legacy header coordinates", mapData.Robot)
+	}
+}
+
+func TestPayloadRobotPositionResolvesCurrentRoom(t *testing.T) {
+	mapData := &MapData{Image: &MapImage{
+		Top: 200, Left: 100, Width: 3, Height: 1,
+		Pixels: []byte{encodedRoomPixel(7), encodedRoomPixel(7), encodedRoomPixel(7)},
+	}}
+	parseBlock(mapData, BlockRobotPosition, make([]byte, 8), positionBytes(5050, 10000, 0))
+
+	vectorJSON, err := MapToVectorJSON(mapData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	room, err := CurrentRoomFromVectorJSON(vectorJSON, map[string]string{"7": "Cuisine"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if room == nil || room.ID != 7 || room.Name != "Cuisine" {
+		t.Fatalf("current room = %+v, want Cuisine (7)", room)
+	}
+}
 
 func encodedRoomPixel(segmentID int) byte {
 	return byte(segmentID<<3 | 0x07)
