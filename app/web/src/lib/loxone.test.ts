@@ -65,6 +65,8 @@ describe('Loxone integration helpers', () => {
 
   it('suggests short readable Loxone input labels without changing technical IDs', () => {
     expect(suggestedLoxoneInputLabel('Roborock Qrevo Curv', 'battery')).toBe('Qrevo Curv — Batterie');
+    expect(suggestedLoxoneInputLabel('Roborock Qrevo Curv', 'running')).toBe('Roborock Qrevo Curv');
+    expect(suggestedLoxoneInputLabel('Robot étage', 'running')).toBe('Robot étage');
     expect(suggestedLoxoneInputLabel('S8 Étage', 'current_room_name')).toBe('S8 Étage — Pièce actuelle');
     expect(suggestedLoxoneInputLabel('', 'custom_field')).toBe('Robot — Custom Field');
   });

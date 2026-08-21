@@ -28,7 +28,7 @@ func TestValuesForStateUsesCorrectLoxoneTypesAndUnits(t *testing.T) {
 		value string
 		kind  ValueKind
 	}{
-		"online": {"1", Digital}, "robot_online": {"1", Digital}, "battery": {"82", Analog},
+		"online": {"1", Digital}, "robot_online": {"1", Digital}, "running": {"1", Digital}, "battery": {"82", Analog},
 		"state": {"14", Analog}, "state_text": {"washing_mop", Text},
 		"current_room_name": {"Cuisine", Text}, "clean_area": {"12.50", Analog},
 		"active_program": {"scene", Text}, "active_scene_id": {"42", Analog},
@@ -54,6 +54,28 @@ func TestValuesForStateClearsActiveSceneAfterCleaning(t *testing.T) {
 	if byField["active_program"].Value != "" || byField["active_scene_id"].Value != "0" || byField["active_scene_name"].Value != "" {
 		t.Fatalf("active scene was not cleared: %+v", byField)
 	}
+	if byField["running"].Value != "0" || byField["running"].Kind != Digital {
+		t.Fatalf("running was not cleared: %+v", byField["running"])
+	}
+}
+
+func TestValuesForStateKeepsRunningDuringDockServiceInsideCleaningMission(t *testing.T) {
+	program := "seg:7"
+	values := ValuesForState(roborock.InternalDeviceState{
+		Slug:      "robot",
+		UpdatedAt: time.Unix(1, 0),
+		Status:    &roborock.PublishedStatus{State: "washing_mop", Program: &program},
+	}, InputMapping{})
+
+	for _, value := range values {
+		if value.Field == "running" {
+			if value.Value != "1" || value.Kind != Digital {
+				t.Fatalf("running during active mission = %+v, want 1/digital", value)
+			}
+			return
+		}
+	}
+	t.Fatal("running Virtual Input is missing")
 }
 
 func TestInstallationValueUsesCompactBridgeInputNameAndOverride(t *testing.T) {

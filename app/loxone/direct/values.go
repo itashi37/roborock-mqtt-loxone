@@ -63,6 +63,10 @@ func ValuesForState(state roborock.InternalDeviceState, mapping InputMapping) []
 		robotOnline = "1"
 	}
 	program := roborock.ResolveActiveProgram(status, state.Scenes)
+	running := "0"
+	if program.Kind != "" {
+		running = "1"
+	}
 	values := []struct {
 		field string
 		kind  ValueKind
@@ -70,6 +74,7 @@ func ValuesForState(state roborock.InternalDeviceState, mapping InputMapping) []
 	}{
 		{"online", Digital, online},
 		{"robot_online", Digital, robotOnline},
+		{"running", Digital, running},
 		{"battery", Analog, strconv.Itoa(battery)},
 		{"state", Analog, strconv.Itoa(DirectStateCode(stateText))},
 		{"state_text", Text, stateText},

@@ -104,7 +104,7 @@ export function directCommandURL(connectorAddress: string, path: string): string
 }
 
 const directInputLabels: Record<string, string> = {
-  online: 'En ligne', battery: 'Batterie', state: 'État (code)', state_text: 'État (texte)',
+  online: 'En ligne', running: 'En fonctionnement', battery: 'Batterie', state: 'État (code)', state_text: 'État (texte)',
   current_room_id: 'Pièce actuelle (ID)', current_room_name: 'Pièce actuelle',
   active_program: 'Programme actif', active_scene_id: 'Scène active (ID)', active_scene_name: 'Scène active',
   error_code: 'Erreur (code)', error_text: 'Erreur (texte)', clean_area: 'Surface nettoyée',
@@ -115,6 +115,7 @@ const directInputLabels: Record<string, string> = {
 };
 
 export function suggestedLoxoneInputLabel(robotName: string, field: string): string {
+  if (field === 'running') return robotName.trim() || 'Robot';
   const shortRobotName = robotName.trim().replace(/^roborock\s+/i, '') || 'Robot';
   const fallback = field.replace(/_/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
   return `${shortRobotName} — ${directInputLabels[field] ?? fallback}`;
