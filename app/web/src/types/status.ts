@@ -24,6 +24,7 @@ export interface VacuumStatus {
   clean_area: number;
   error_code: number;
   error: string;
+  dock_error_status?: number;
   in_cleaning: boolean;
   consumables: ConsumableStatus;
   consumable_percents: ConsumablePercents;

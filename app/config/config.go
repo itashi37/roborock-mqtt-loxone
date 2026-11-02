@@ -35,7 +35,7 @@ func EnsureConfigFile(file string) error {
 		MQTT:     MQTTConfig{Enabled: boolConfig(false), Topic: "home/roborock", QoS: 1, Retain: true},
 		Roborock: RoborockConfig{BaseURL: "https://euiot.roborock.com", PollingInterval: 30},
 		Loxone:   LoxoneConfig{Topic: "loxone/roborock"},
-		Web:      WebConfig{Enabled: true, Port: 8080}, LogLevel: "info",
+		Web:      WebConfig{Enabled: true, Port: 8080}, LogLevel: "info", SetupComplete: boolConfig(false),
 	}
 	data, err := json.MarshalIndent(minimal, "", "  ")
 	if err != nil {
@@ -73,6 +73,7 @@ type Config struct {
 	Watchdog      WatchdogConfig     `json:"watchdog,omitempty"`
 	Updates       UpdateConfig       `json:"updates,omitempty"`
 	LogLevel      string             `json:"loglevel,omitempty"`
+	SetupComplete *bool              `json:"setup_complete,omitempty"`
 }
 
 // MQTTConfig controls the optional local/home-automation MQTT adapter. Enabled
@@ -556,12 +557,12 @@ func SaveRuntimeSettings(settings RuntimeSettings) error {
 func RuntimeSettingsSnapshot() RuntimeSettings {
 	cfgMu.RLock()
 	defer cfgMu.RUnlock()
-	settings := RuntimeSettings{MQTT: cfg.MQTT, Loxone: cfg.Loxone, RoborockUsername: cfg.Roborock.Username}
+	settings := RuntimeSettings{MQTT: cfg.MQTT, Loxone: cfg.Loxone, RoborockUsername: cfg.Roborock.Username, SetupComplete: cfg.SetupComplete}
 	if loadedConfigFile != "" {
 		data, err := os.ReadFile(filepath.Join(filepath.Dir(loadedConfigFile), runtimeSettingsFile))
 		if err == nil {
 			var persisted RuntimeSettings
-			if json.Unmarshal(data, &persisted) == nil {
+			if json.Unmarshal(data, &persisted) == nil && persisted.SetupComplete != nil {
 				settings.SetupComplete = persisted.SetupComplete
 			}
 		}

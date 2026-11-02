@@ -44,10 +44,12 @@ type sanitizedMQTTConfig struct {
 }
 
 type sanitizedLoxoneConfig struct {
-	Enabled bool                                      `json:"enabled"`
-	Topic   string                                    `json:"topic"`
-	Direct  sanitizedDirectLoxoneConfig               `json:"direct"`
-	Devices map[string]config.DeviceIntegrationConfig `json:"devices,omitempty"`
+	Enabled               bool                                      `json:"enabled"`
+	Topic                 string                                    `json:"topic"`
+	CommandDebounceMS     int                                       `json:"command_debounce_ms"`
+	CommandTimeoutSeconds int                                       `json:"command_timeout_seconds"`
+	Direct                sanitizedDirectLoxoneConfig               `json:"direct"`
+	Devices               map[string]config.DeviceIntegrationConfig `json:"devices,omitempty"`
 }
 
 type sanitizedDirectLoxoneConfig struct {
@@ -101,6 +103,7 @@ func sanitizeSettings() setupSettingsResponse {
 		},
 		Loxone: sanitizedLoxoneConfig{
 			Enabled: settings.Loxone.Enabled, Topic: settings.Loxone.Topic, Devices: settings.Loxone.Devices,
+			CommandDebounceMS: settings.Loxone.CommandDebounceMS, CommandTimeoutSeconds: settings.Loxone.CommandTimeoutSeconds,
 			Direct: sanitizedDirectLoxoneConfig{
 				Enabled: direct.Enabled, Scheme: direct.Scheme, Host: direct.Host, Port: direct.Port,
 				Username: direct.Username, TimeoutSeconds: direct.TimeoutSeconds, MaxRetries: direct.MaxRetries,
@@ -130,6 +133,27 @@ func (ws *WebServer) setupStatus(w http.ResponseWriter, _ *http.Request) {
 
 func mergeSecrets(request settingsUpdateRequest) config.RuntimeSettings {
 	current := config.RuntimeSettingsSnapshot()
+	// Simplified and older setup forms omit advanced mappings and command
+	// timings. Saving connection details must not replace a working Loxone
+	// installation with defaults. Explicit empty maps still clear overrides.
+	if request.Loxone.Devices == nil {
+		request.Loxone.Devices = current.Loxone.Devices
+	}
+	if request.Loxone.Direct.Inputs == nil {
+		request.Loxone.Direct.Inputs = current.Loxone.Direct.Inputs
+	}
+	if strings.TrimSpace(request.Loxone.Direct.InputPrefix) == "" {
+		request.Loxone.Direct.InputPrefix = current.Loxone.Direct.InputPrefix
+	}
+	if request.Loxone.CommandDebounceMS <= 0 {
+		request.Loxone.CommandDebounceMS = current.Loxone.CommandDebounceMS
+	}
+	if request.Loxone.CommandTimeoutSeconds <= 0 {
+		request.Loxone.CommandTimeoutSeconds = current.Loxone.CommandTimeoutSeconds
+	}
+	if request.SetupComplete == nil {
+		request.SetupComplete = current.SetupComplete
+	}
 	if request.MQTT.Password == "" {
 		request.MQTT.Password = current.MQTT.Password
 	}

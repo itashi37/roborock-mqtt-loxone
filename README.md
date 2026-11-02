@@ -1,28 +1,41 @@
-# roborock-mqtt-loxone
+# Roborock → Loxone
 
-A Roborock-to-Loxone MQTT bridge with a built-in integration assistant, web UI,
-multi-robot support, command tracking, and room-aware automation.
+Une passerelle dédiée à vos robots Roborock dans Loxone : connectez votre compte,
+choisissez vos robots et retrouvez leurs états, pièces et commandes dans votre
+Miniserver. L’interface est organisée autour de vos **Robots**, de la connexion
+**Loxone** et du **Système**.
+
+**Déjà installé ?** Vos adresses de commandes, noms d’entrées Loxone et
+identifiants des robots sont conservés. Gardez votre volume de données et votre
+port actuels, puis utilisez votre updater habituel pour installer une version
+publiée. Il n’est pas nécessaire de recréer l’intégration Loxone.
+
+**Nouvelle installation Synology :** importez
+[`compose.synology.yaml`](compose.synology.yaml) dans Container Manager.
+L’image publiée et le service de mise à jour sont inclus, sans compilation ni
+Mosquitto requis pour Loxone HTTP direct. Suivez le
+[guide d’installation pas à pas](docs/INSTALLATION_SYNOLOGY.md).
+
+Les versions stables s’installent **lorsque vous le décidez**, depuis **Système &
+mises à jour → Rechercher une mise à jour → Installer**. Le mode par défaut
+prévient seulement de leur disponibilité. Les préférences d’une installation
+existante sont conservées et restent accessibles dans les réglages avancés.
 
 This project is a dedicated fork of
 [`mqtt-home/roborock-mqtt`](https://github.com/mqtt-home/roborock-mqtt). It
 preserves the upstream Git history and attribution while adding an optional,
 additive Loxone contract. Existing upstream MQTT topics remain available.
 
-## Features
+## L’essentiel
 
-- Bridges Roborock devices to a local MQTT broker
-- Web UI for device control, cleaning programs, and schedule management
-- Context-aware cleaning schedules with four day types (normal, weekend, free day, not at home)
-- MQTT signal integration for public holidays and vacation detection
-- Per-device scene (program) execution
-- Live device status, map visualization, and SSE real-time updates
-- Multi-device support
-- Compact Loxone `/core` and `/activity` topics (2 subscriptions per robot)
-- Reliable command lifecycle and robot events
-- Loxone Integration web page with room-name overrides and diagnostics
-- Safe downloadable Loxone setup pack generated from detected robots
-- Browser-first setup for MQTT, Direct HTTP, or Both
-- Capability-aware dock controls and fleet health diagnostics
+- Plusieurs robots, chacun avec des adresses stables indépendantes de son nom.
+- États et commandes Loxone HTTP direct, avec un pack de configuration exportable.
+- Pièces, programmes et fonctions de station selon les capacités de chaque robot.
+- Mises à jour à la demande, sauvegarde des données et retour arrière automatique.
+- Installation Docker sur Synology en utilisant les images `amd64` et `arm64`.
+
+Les transports MQTT et les automatismes existants restent compatibles. Les
+références techniques ci-dessous documentent ces possibilités avancées.
 
 ## Quick Start
 
@@ -43,14 +56,17 @@ Stable SemVer releases also publish immutable `:v1.2.3`, minor `:1.2`, and
 major `:1` aliases. Every manifest contains both `linux/amd64` and
 `linux/arm64`; `:edge` is never promoted to `:latest`.
 
-### System & Updates
+### Système & mises à jour
 
-Open `/system` to inspect the installed version and commit, architecture,
-uptime, data-volume writability/free space, watchdog state, and sanitized MQTT
-and Direct Loxone transport diagnostics. **Check for updates** reads public
-GitHub release metadata for Stable or the latest `main` commit for Beta/Edge.
-It does not require or expose a GitHub/Registry credential. In this phase the
-page is discovery-only and deliberately has no Docker access.
+La page `/system` affiche la version installée, l’état de Loxone et la
+disponibilité de l’updater. **Rechercher une mise à jour** consulte les versions
+publiées sur GitHub ; **Installer** demande une confirmation avant de démarrer
+l’updater. La progression reprend automatiquement après le redémarrage.
+
+Les réglages avancés regroupent le canal Stable / Développement, la politique
+d’installation facultative, les créneaux et les diagnostics. Ouvrir cette page
+ne modifie aucune préférence. La recherche ne demande aucun identifiant GitHub.
+Le conteneur de la passerelle n’a pas accès au socket Docker.
 
 ### Isolated updater security model
 
@@ -134,27 +150,20 @@ secured broker before exposing port 1883 outside a trusted network.
 
 ### Synology Container Manager
 
-Create a writable data directory for the image's non-root UID/GID, clone the
-repository into `source`, then start the Compose project:
+Pour une installation simple avec les images publiées, utilisez
+[`compose.synology.yaml`](compose.synology.yaml). Il démarre la passerelle et
+l’updater, conserve leurs noms actuels et partage le même volume de données.
+La valeur par défaut est le canal stable `:latest`. Le fichier
+[`compose.yaml`](compose.yaml) reste disponible pour compiler depuis les sources
+et utiliser les profils `mqtt` ou `updates` existants.
 
-```bash
-mkdir -p /volume1/docker/roborock-mqtt-loxone/data
-sudo chown -R 65532:65532 /volume1/docker/roborock-mqtt-loxone/data
-cd /volume1/docker/roborock-mqtt-loxone/source
-ROBOROCK_DATA_DIR=/volume1/docker/roborock-mqtt-loxone/data docker compose up -d --build
-```
+Le [guide Synology](docs/INSTALLATION_SYNOLOGY.md) détaille l’import dans Container
+Manager, les volumes existants, le port, les permissions du service de mise à
+jour et la procédure pour ajouter un robot sans toucher aux adresses des autres.
 
-Container Manager can import `compose.yaml` as a Project. Put
-`ROBOROCK_DATA_DIR=/volume1/docker/roborock-mqtt-loxone/data` in `.env`. For an
-update that preserves all state:
-
-```bash
-cd /volume1/docker/roborock-mqtt-loxone/source
-git pull --ff-only origin main
-ROBOROCK_DATA_DIR=/volume1/docker/roborock-mqtt-loxone/data docker compose up -d --build
-```
-
-This deployment is independent from any existing upstream container.
+Ne remplacez pas un volume de données existant par un volume vide. L’installation
+du nouveau projet n’est pas nécessaire pour mettre à jour une passerelle dont
+l’updater fonctionne déjà.
 
 ### From Source
 

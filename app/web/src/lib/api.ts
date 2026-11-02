@@ -64,11 +64,13 @@ export interface SetupStatus {
   };
   loxone: {
     enabled: boolean; topic: string;
+    command_debounce_ms?: number; command_timeout_seconds?: number;
     devices?: Record<string, { mqtt?: boolean; direct?: boolean }>;
     direct: {
       enabled: boolean; scheme: string; host: string; port: number; username: string;
       timeout_seconds: number; max_retries: number; retry_delay_ms: number;
       input_prefix: string; api_username: string; allowed_cidrs?: string[];
+      inputs?: Record<string, Record<string, string>>;
       allow_get_commands: boolean; rate_limit_per_minute: number;
       password_configured: boolean; api_token_configured: boolean;
     };

@@ -365,7 +365,7 @@ func (ws *WebServer) loxoneCommandTest(w http.ResponseWriter, r *http.Request) {
 	}
 	dependencies := ws.getLoxoneIntegration()
 	if dependencies == nil || dependencies.PublishCommand == nil {
-		writeLoxoneError(w, http.StatusServiceUnavailable, fmt.Errorf("Loxone MQTT command publisher unavailable"))
+		writeLoxoneError(w, http.StatusServiceUnavailable, fmt.Errorf("Loxone command handler unavailable"))
 		return
 	}
 	var request loxoneCommandRequest

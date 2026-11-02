@@ -106,6 +106,54 @@ func TestEnsureConfigFileCreatesDirectReadyBrowserFirstConfig(t *testing.T) {
 	}
 }
 
+func TestNewInstallationRemainsIncompleteAfterSavingLoginEmail(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "config.json")
+	if err := EnsureConfigFile(file); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(file); err != nil {
+		t.Fatal(err)
+	}
+	settings := RuntimeSettingsSnapshot()
+	settings.RoborockUsername = "owner@example.com"
+	// Older clients may omit the marker when requesting a login code.
+	settings.SetupComplete = nil
+	if err := SaveRuntimeSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(file); err != nil {
+		t.Fatal(err)
+	}
+	if SetupComplete() {
+		t.Fatal("saving a login email skipped unfinished first-time setup")
+	}
+	complete := true
+	settings = RuntimeSettingsSnapshot()
+	settings.SetupComplete = &complete
+	if err := SaveRuntimeSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(file); err != nil {
+		t.Fatal(err)
+	}
+	if !SetupComplete() {
+		t.Fatal("explicitly completed setup did not override the new-install marker")
+	}
+}
+
+func TestLegacyAccountConfigurationStillInfersCompletedSetup(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(file, []byte(`{"mqtt":{"enabled":false},"roborock":{"username":"owner@example.com"},"web":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(file); err != nil {
+		t.Fatal(err)
+	}
+	if !SetupComplete() {
+		t.Fatal("legacy installation with an existing account was forced into setup")
+	}
+}
+
 func TestLoadConfigCanDisableLocalMQTT(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "config.json")
 	data := []byte(`{

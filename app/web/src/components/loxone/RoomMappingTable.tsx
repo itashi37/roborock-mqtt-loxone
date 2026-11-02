@@ -1,7 +1,7 @@
-import { RotateCcw, Save } from 'lucide-react';
+import { MapPin, RotateCcw, Save } from 'lucide-react';
 import type { LoxoneExportSelection, LoxoneRoom } from '@/types/loxone';
 import type { RoomDraftValidation } from '@/lib/loxone';
-import { EmptyState, Spinner, StatusBadge } from './LoxoneUI';
+import { EmptyState, Spinner } from './LoxoneUI';
 
 interface Props {
   slug: string;
@@ -17,44 +17,15 @@ interface Props {
 }
 
 export function RoomMappingTable({ slug, rooms, selected, drafts, validation, busy, onDraft, onSave, onReset, onSelect }: Props) {
-  if (rooms.length === 0) return <EmptyState>No commandable segment was returned by <code>get_room_mapping</code>.</EmptyState>;
-  return <div className="overflow-hidden rounded-xl border border-border">
-    <div className="hidden grid-cols-[54px_90px_1fr_1.2fr_110px_130px] gap-3 bg-muted/60 px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground md:grid">
-      <span>Export</span><span>Segment</span><span>Roborock name</span><span>Loxone name</span><span>Status</span><span className="text-right">Action</span>
-    </div>
-    <div className="divide-y divide-border">
-      {rooms.map(room => {
-        const state = validation[room.id];
-        const key = `room:${slug}:${room.id}`;
-        const storedValue = room.override_name ?? room.effective_name;
-        const currentValue = drafts[String(room.id)] ?? storedValue;
-        const unchanged = currentValue.trim() === storedValue.trim();
-        return <div key={room.id} className={`grid gap-3 p-3 md:grid-cols-[54px_90px_1fr_1.2fr_110px_130px] md:items-start ${state?.error ? 'bg-red-500/5' : 'bg-background'}`}>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground md:block">
-            <span className="md:hidden">Include in export</span>
-            <input type="checkbox" checked={Boolean(selected?.room_ids.includes(room.id))} disabled={!selected} onChange={event => onSelect(room.id, event.target.checked)} className="h-4 w-4" />
-          </label>
-          <div><span className="text-xs text-muted-foreground md:hidden">Segment ID · </span><strong className="tabular-nums">{room.id}</strong></div>
-          <div className="min-w-0">
-            <span className="text-xs text-muted-foreground md:hidden">Roborock · </span><span>{room.roborock_name}</span>
-            <div className="mt-1"><StatusBadge tone="green" title="This segment is present in get_room_mapping and can be sent to segment_clean.">Commandable</StatusBadge></div>
-          </div>
-          <div className="min-w-0">
-            <label htmlFor={`room-${room.id}`} className="mb-1 block text-xs text-muted-foreground md:hidden">Loxone name</label>
-            <input id={`room-${room.id}`} value={currentValue} maxLength={81} onChange={event => onDraft(room.id, event.target.value)} className={`w-full rounded-lg border bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring ${state?.error ? 'border-red-500' : 'border-border'}`} aria-invalid={Boolean(state?.error)} aria-describedby={state?.error ? `room-${room.id}-error` : undefined} />
-            {state?.error && <p id={`room-${room.id}-error`} className="mt-1 text-xs text-red-500">{state.error}</p>}
-          </div>
-          <div>{state?.error ? <StatusBadge tone="red">Conflict</StatusBadge> : <StatusBadge tone="green">Valid</StatusBadge>}</div>
-          <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => onSave(room.id)} disabled={busy.has(key) || unchanged || Boolean(state?.error)} className="touch-target inline-flex items-center gap-1 rounded-lg border border-border px-2 text-sm hover:bg-accent disabled:opacity-40" title="Save this room name">
-              {busy.has(key) ? <Spinner label="" /> : <Save className="h-4 w-4" />} Save
-            </button>
-            <button type="button" onClick={() => onReset(room.id)} disabled={busy.has(key) || !room.override_name} className="touch-target inline-flex items-center justify-center rounded-lg border border-border px-2 text-muted-foreground hover:bg-accent disabled:opacity-40" title="Reset to the Roborock or configured name" aria-label={`Reset room ${room.id}`}>
-              <RotateCcw className="h-4 w-4" />
-            </button>
-          </div>
-        </div>;
-      })}
-    </div>
-  </div>;
+  if (!rooms.length) return <EmptyState>Aucune pièce n’a encore été reçue. Vérifiez que la carte de ce robot contient des pièces définies dans l’application Roborock.</EmptyState>;
+  return <div className="overflow-hidden rounded-xl border border-slate-200"><div className="hidden grid-cols-[30px_1fr_1.1fr_130px] gap-3 bg-slate-50 px-4 py-3 text-[10px] font-medium uppercase tracking-wider text-slate-400 md:grid"><span title="Inclure dans le dossier">ZIP</span><span>Pièce Roborock</span><span>Nom personnalisé</span><span /></div><div className="divide-y divide-slate-100">{rooms.map(room => {
+    const state = validation[room.id];
+    const key = `room:${slug}:${room.id}`;
+    const storedValue = room.override_name ?? room.effective_name;
+    const currentValue = drafts[String(room.id)] ?? storedValue;
+    const unchanged = currentValue.trim() === storedValue.trim();
+    const inputID = `room-${slug}-${room.id}`;
+    const error = state?.error ? !state.value ? 'Le nom de la pièce est obligatoire.' : state.conflict ? 'Ce nom est déjà utilisé par une autre pièce.' : 'Le nom ne peut pas dépasser 80 caractères.' : undefined;
+    return <div key={room.id} className={`grid gap-3 px-4 py-4 md:grid-cols-[30px_1fr_1.1fr_130px] md:items-center ${error ? 'bg-rose-50/50' : 'bg-white'}`}><label className="flex items-center gap-2 text-xs text-slate-400"><input type="checkbox" checked={Boolean(selected?.room_ids.includes(room.id))} disabled={!selected} onChange={event => onSelect(room.id, event.target.checked)} className="h-4 w-4 accent-emerald-600" aria-label={`Inclure ${room.effective_name} dans le dossier`} /><span className="md:hidden">Inclure dans le dossier</span></label><div className="flex min-w-0 items-center gap-2.5"><MapPin className="h-4 w-4 shrink-0 text-slate-300" /><div className="min-w-0"><strong className="block truncate text-sm font-medium text-slate-700">{room.roborock_name || room.effective_name}</strong><span className="mt-1 block text-[10px] text-slate-400">Identifiant {room.id}</span></div></div><div><label className="sr-only" htmlFor={inputID}>Nom de la pièce {room.id}</label><input id={inputID} value={currentValue} maxLength={81} onChange={event => onDraft(room.id, event.target.value)} className={`min-h-10 w-full rounded-xl border bg-white px-3 text-xs text-slate-700 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-50 ${error ? 'border-rose-300' : 'border-slate-200'}`} aria-invalid={Boolean(error)} aria-describedby={error ? `${inputID}-error` : undefined} />{error && <p id={`${inputID}-error`} className="mt-1 text-[10px] text-rose-600">{error}</p>}</div><div className="flex justify-end gap-1.5"><button type="button" onClick={() => onSave(room.id)} disabled={busy.has(key) || unchanged || Boolean(error)} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 text-[11px] font-medium text-slate-600 hover:bg-emerald-50 disabled:opacity-35" title="Enregistrer ce nom">{busy.has(key) ? <Spinner label="" /> : <Save className="h-3.5 w-3.5" />}Enregistrer</button><button type="button" onClick={() => onReset(room.id)} disabled={busy.has(key) || !room.override_name} className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-50 disabled:opacity-30" title="Rétablir le nom d’origine" aria-label={`Rétablir le nom de la pièce ${room.id}`}><RotateCcw className="h-3.5 w-3.5" /></button></div></div>;
+  })}</div></div>;
 }

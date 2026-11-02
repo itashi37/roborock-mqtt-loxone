@@ -1,66 +1,69 @@
 @import "tailwindcss";
-
 @theme {
-  --color-border: hsl(214.3 31.8% 91.4%);
-  --color-input: hsl(214.3 31.8% 91.4%);
-  --color-ring: hsl(221.2 83.2% 53.3%);
-  --color-background: hsl(0 0% 100%);
-  --color-foreground: hsl(222.2 84% 4.9%);
-  --color-primary: hsl(221.2 83.2% 53.3%);
-  --color-primary-foreground: hsl(210 40% 98%);
-  --color-secondary: hsl(210 40% 96%);
-  --color-secondary-foreground: hsl(222.2 84% 4.9%);
-  --color-muted: hsl(210 40% 96%);
-  --color-muted-foreground: hsl(215.4 16.3% 46.9%);
-  --color-accent: hsl(210 40% 96%);
-  --color-accent-foreground: hsl(222.2 84% 4.9%);
-  --color-card: hsl(0 0% 100%);
-  --color-card-foreground: hsl(222.2 84% 4.9%);
-
-  --radius-lg: 0.5rem;
-  --radius-md: calc(0.5rem - 2px);
-  --radius-sm: calc(0.5rem - 4px);
+  --color-border: #e1e7e3;
+  --color-input: #d8e0da;
+  --color-ring: #31885d;
+  --color-background: #f5f6f8;
+  --color-foreground: #1d3025;
+  --color-primary: #177b56;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #edf3ef;
+  --color-secondary-foreground: #294537;
+  --color-muted: #f0f3f1;
+  --color-muted-foreground: #78847c;
+  --color-accent: #edf5ef;
+  --color-accent-foreground: #1c5237;
+  --color-card: #ffffff;
+  --color-card-foreground: #1d3025;
+  --radius-lg: 1rem;
+  --radius-md: .75rem;
+  --radius-sm: .5rem;
 }
-
-.dark {
-  --color-border: hsl(217.2 32.6% 17.5%);
-  --color-input: hsl(217.2 32.6% 17.5%);
-  --color-ring: hsl(212.7 26.8% 83.9%);
-  --color-background: hsl(222.2 84% 4.9%);
-  --color-foreground: hsl(210 40% 98%);
-  --color-primary: hsl(217.2 91.2% 59.8%);
-  --color-primary-foreground: hsl(222.2 84% 4.9%);
-  --color-secondary: hsl(217.2 32.6% 17.5%);
-  --color-secondary-foreground: hsl(210 40% 98%);
-  --color-muted: hsl(217.2 32.6% 17.5%);
-  --color-muted-foreground: hsl(215 20.2% 65.1%);
-  --color-accent: hsl(217.2 32.6% 17.5%);
-  --color-accent-foreground: hsl(210 40% 98%);
-  --color-card: hsl(222.2 84% 4.9%);
-  --color-card-foreground: hsl(210 40% 98%);
-}
-
-* {
-  border-color: var(--color-border);
-}
-
-body {
-  background-color: var(--color-background);
-  color: var(--color-foreground);
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: auto;
-}
-
-.touch-target {
-  min-height: 44px;
-  min-width: 44px;
-}
-
-@keyframes pulse-border {
-  0%, 100% { border-color: hsl(221.2 83.2% 53.3% / 0.3); }
-  50% { border-color: hsl(221.2 83.2% 53.3% / 0.6); }
-}
-
-.animate-pulse-border {
-  animation: pulse-border 2s ease-in-out infinite;
-}
+* { border-color: var(--color-border); }
+body { margin: 0; background: var(--color-background); color: var(--color-foreground); font-family: "Avenir Next", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif; -webkit-font-smoothing: antialiased; }
+button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button:not(:disabled), summary { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+button, a, input, select, summary { outline-offset: 4px; }
+button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--color-ring); }
+input, select, textarea { accent-color: var(--color-primary); }
+input:focus, select:focus { outline: 2px solid #31885d55; outline-offset: 1px; }
+summary { list-style-position: outside; margin-left: 1rem; }
+code { font-size: .9em; }
+.touch-target { min-height: 44px; min-width: 44px; }
+.bridge-sidebar { position: fixed; inset: 0 auto 0 0; z-index: 40; display: flex; width: 248px; flex-direction: column; border-right: 1px solid #e5ebe6; background: #fff; padding: 32px 20px 24px; }
+.bridge-main { margin-left: 248px; }
+.bridge-topbar { display: flex; height: 76px; align-items: center; justify-content: space-between; border-bottom: 1px solid #e5e9e6; padding: 0 40px; background: #ffffff85; }
+.bridge-content { max-width: 1440px; margin: 0 auto; padding: 38px 40px 48px; }
+.bridge-nav { display: flex; align-items: center; gap: 12px; border-radius: 10px; padding: 12px 14px; color: #768279; font-size: 13px; font-weight: 500; transition: background .15s, color .15s; }
+.bridge-nav:hover { background: #f4f7f4; color: #245437; }
+.bridge-nav.is-active { background: #eaf3ec; color: #247247; font-weight: 600; }
+.bridge-eyebrow { margin-bottom: 8px; color: #7c8980; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .15em; }
+.bridge-title { font-size: clamp(26px, 3vw, 34px); font-weight: 600; line-height: 1.2; letter-spacing: -1.1px; }
+.bridge-description { margin-top: 9px; color: var(--color-muted-foreground); font-size: 13px; line-height: 1.7; }
+.bridge-card { border: 1px solid #e1e7e3; border-radius: 20px; background: #fff; box-shadow: 0 2px 3px #14281902; }
+.bridge-button-primary, .bridge-button-secondary, .bridge-icon-button { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; gap: 8px; border: 1px solid transparent; border-radius: 10px; padding: 10px 16px; font-size: 12px; font-weight: 600; transition: background .15s, box-shadow .15s; }
+.bridge-button-primary { background: #177b56; color: #fff; box-shadow: 0 2px 4px #1f734c18; }
+.bridge-button-primary:hover { background: #126344; }
+.bridge-button-secondary, .bridge-icon-button { border-color: #dfe6e0; background: #fff; color: #385642; }
+.bridge-button-secondary:hover, .bridge-icon-button:hover { background: #eef5ef; }
+.bridge-button-primary:disabled, .bridge-button-secondary:disabled, .bridge-icon-button:disabled { opacity: .5; }
+.bridge-icon-button { width: 42px; padding: 10px; }
+@media (min-width: 1024px) { .bridge-topbar .bridge-icon-button.lg\:hidden { display: none; } }
+.bridge-hero { position: relative; overflow: hidden; min-height: 308px; border: 1px solid #2b553a; border-radius: 23px; background: radial-gradient(ellipse at 90% 100%, #3a6447 0, transparent 60%), #173f2d; padding: 30px 34px; color: #fff; }
+.bridge-hero-art { position: absolute; width: 420px; height: 420px; right: -20px; top: -60px; }
+.bridge-orbit { position: absolute; border: 1px solid #b8d6bf18; border-radius: 100%; }
+.orbit-one { inset: 10px; }.orbit-two { inset: 60px; }.orbit-three { inset: 110px; }
+.hero-robot { position: absolute; width: 185px; height: 185px; left: 58px; top: 114px; transform: rotate(-14deg); }
+.hero-mini-badge { position: absolute; right: 2px; bottom: 18px; display: flex; width: 34px; height: 34px; align-items: center; justify-content: center; border: 3px solid #2b5137; border-radius: 100%; background: #e1f7de; color: #247449; }
+.hero-loxone { position: absolute; right: 53px; top: 115px; display: flex; width: 60px; height: 60px; align-items: center; justify-content: center; border: 1px solid #ffffff20; border-radius: 16px; background: #9ae69d; color: #255e36; font-family: Arial, sans-serif; font-size: 34px; font-weight: 600; transform: rotate(9deg); box-shadow: 0 10px 30px #0c231d40; }
+.hero-loxone-dot { position: absolute; bottom: 12px; right: 14px; width: 6px; height: 6px; border-radius: 50%; background: #255e36; }
+.hero-flow-dot { position: absolute; top: 231px; right: 76px; width: 10px; height: 10px; border-radius: 50%; background: #a5d9af; box-shadow: 0 0 0 6px #b8e6c015; }
+.setup-input { display: block; width: 100%; margin-top: 7px; border: 1px solid #d8e0da; border-radius: 10px; background: white; padding: 11px 13px; font-size: 13px; }
+.bridge-section { animation: appear .25s ease-out; }
+@keyframes appear { from { opacity: .4; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (min-width: 1600px) { .bridge-content { padding-top: 48px; } }
+@media (max-width: 1100px) { .bridge-sidebar { width: 220px; padding-left: 16px; padding-right: 16px; }.bridge-main { margin-left: 220px; }.bridge-content { padding: 30px 26px; }.bridge-topbar { padding: 0 26px; }.bridge-hero-art { right: -90px; opacity: .65; }.bridge-hero { padding-left: 28px; } }
+@media (max-width: 1023px) { .bridge-sidebar { width: 248px; transform: translateX(-100%); transition: transform .2s; }.bridge-sidebar.is-open { transform: translateX(0); }.bridge-main { margin-left: 0; }.bridge-topbar { height: 64px; }.bridge-hero-art { right: -20px; opacity: 1; } }
+@media (max-width: 640px) { .bridge-content { padding: 25px 18px 40px; }.bridge-topbar { padding: 0 18px; }.bridge-hero { min-height: 300px; padding: 26px; }.bridge-hero-art { right: -205px; opacity: .32; }.bridge-title { font-size: 29px; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }

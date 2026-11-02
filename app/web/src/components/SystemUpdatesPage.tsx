@@ -1,47 +1,55 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Clock3, Database, ExternalLink, RefreshCw, Server, ShieldCheck, Wifi } from 'lucide-react';
+import { Activity, AlertCircle, ArrowDownToLine, ArrowRight, Check, CheckCircle2, ChevronDown, Clock3, Database, ExternalLink, RefreshCw, Settings2, ShieldCheck, Wifi } from 'lucide-react';
 import { checkForUpdates, fetchSystemStatus, fetchUpdateOperation, installUpdate, saveUpdateSettings } from '@/lib/api';
 import type { SystemStatus, UpdateOperation, UpdateSettings } from '@/types/system';
 
 const activeUpdateStages = new Set(['preparing', 'pulling', 'backing_up', 'restarting', 'validating', 'rollback']);
+const primaryButton = 'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#177b56] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#126344] disabled:cursor-not-allowed disabled:opacity-45';
+const secondaryButton = 'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-[#15241e] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45';
+const inputClass = 'mt-2 min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-[#15241e] outline-none focus:border-[#177b56] focus:ring-2 focus:ring-emerald-100';
 
-export function SystemUpdatesPage({ returnSlug }: { returnSlug?: string }) {
+export function SystemUpdatesPage(_props: { returnSlug?: string }) {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [channel, setChannel] = useState<'stable' | 'edge'>('stable');
-  const [busy, setBusy] = useState(false);
+  const [action, setAction] = useState<'check' | 'install' | 'settings' | null>(null);
   const [error, setError] = useState('');
-  const [showNotes, setShowNotes] = useState(false);
   const [operation, setOperation] = useState<UpdateOperation | null>(null);
   const [updaterAvailable, setUpdaterAvailable] = useState<boolean | null>(null);
   const [confirmInstall, setConfirmInstall] = useState(false);
   const [settings, setSettings] = useState<UpdateSettings | null>(null);
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const initialized = useRef(false);
 
   const load = async () => {
-    setError('');
-    try {
-      const value = await fetchSystemStatus();
-      setStatus(value);
-      setSettings(value.update_settings);
+    const value = await fetchSystemStatus();
+    setStatus(value);
+    setSettings(current => current ?? value.update_settings);
+    if (!initialized.current) {
       setChannel(value.channel === 'edge' ? 'edge' : 'stable');
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Unable to load system status');
+      initialized.current = true;
     }
   };
-
   const loadOperation = async () => {
     try {
       const value = await fetchUpdateOperation();
-      setOperation(value); setUpdaterAvailable(true);
-      if (value.stage === 'success') void load();
+      setOperation(value);
+      setUpdaterAvailable(true);
+      if (value.stage === 'success') await load();
     } catch {
+      // The bridge can be briefly unreachable while the updater restarts it.
       setUpdaterAvailable(false);
     }
   };
-
-  useEffect(() => { void load(); void loadOperation(); }, []);
+  const refreshStatus = async () => {
+    setRefreshing(true);
+    setError('');
+    try { await Promise.all([load(), loadOperation()]); }
+    catch (reason) { setError(errorMessage(reason, 'Impossible de joindre la passerelle.')); }
+    finally { setRefreshing(false); }
+  };
+  useEffect(() => { void refreshStatus(); }, []);
   useEffect(() => {
     if (!operation || !activeUpdateStages.has(operation.stage)) return;
     const timer = window.setInterval(() => void loadOperation(), 2000);
@@ -49,153 +57,138 @@ export function SystemUpdatesPage({ returnSlug }: { returnSlug?: string }) {
   }, [operation?.stage]);
 
   const check = async () => {
-    setBusy(true); setError(''); setShowNotes(false);
+    setAction('check'); setError(''); setConfirmInstall(false);
     try {
       const update = await checkForUpdates(channel);
       setStatus(current => current ? { ...current, update } : current);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Update check failed');
-    } finally {
-      setBusy(false);
-    }
+    } catch (reason) { setError(errorMessage(reason, 'La recherche de mise à jour a échoué.')); }
+    finally { setAction(null); }
   };
-
   const install = async () => {
-    setBusy(true); setError(''); setConfirmInstall(false);
+    setAction('install'); setError(''); setConfirmInstall(false);
     try {
       const next = await installUpdate(channel);
       setOperation(next); setUpdaterAvailable(true);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Update installation failed to start');
-    } finally {
-      setBusy(false);
-    }
+    } catch (reason) { setError(errorMessage(reason, 'Impossible de démarrer la mise à jour.')); }
+    finally { setAction(null); }
   };
-
   const savePolicy = async () => {
     if (!settings) return;
-    setBusy(true); setError(''); setSettingsSaved(false);
+    setAction('settings'); setError(''); setSettingsSaved(false);
     try {
       const saved = await saveUpdateSettings(settings);
-      setSettings(saved); setSettingsSaved(true);
-      window.setTimeout(() => setSettingsSaved(false), 3000);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Failed to save update policy');
-    } finally {
-      setBusy(false);
-    }
+      setSettings(saved);
+      setStatus(current => current ? { ...current, update_settings: saved } : current);
+      setSettingsSaved(true);
+    } catch (reason) { setError(errorMessage(reason, 'Impossible d’enregistrer ces préférences.')); }
+    finally { setAction(null); }
   };
 
-  const refreshStatus = async () => {
-    setRefreshing(true);
-    await Promise.all([load(), loadOperation()]);
-    setRefreshing(false);
-  };
+  if (!status) return <section className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
+    {error ? <AlertCircle className="mx-auto h-8 w-8 text-amber-600" /> : <RefreshCw className="mx-auto h-8 w-8 animate-spin text-[#177b56]" />}
+    <h1 className="mt-4 text-xl font-semibold text-[#15241e]">{error ? 'Passerelle momentanément indisponible' : 'Connexion à la passerelle…'}</h1>
+    <p className="mt-2 text-sm text-slate-500">{error || 'Nous récupérons votre version et l’état des mises à jour.'}</p>
+    {error && <button onClick={() => void refreshStatus()} disabled={refreshing} className={`${primaryButton} mt-6`}>Réessayer</button>}
+  </section>;
 
-  if (!status) return <PageShell returnSlug={returnSlug}><LoadingState error={error} onRetry={() => void refreshStatus()} /></PageShell>;
   const update = status.update;
-  const healthTone = status.health.status === 'healthy' ? 'green' : status.health.status === 'degraded' ? 'amber' : 'red';
+  const operationActive = Boolean(operation && activeUpdateStages.has(operation.stage));
+  const busy = action !== null || operationActive;
+  const selectedUpdate = update.channel === channel;
+  const checked = Boolean(update.checked_at && selectedUpdate);
+  const available = checked && update.available;
+  const healthy = status.health.status === 'healthy';
   const direct = status.transports.direct;
+  const loxone = direct?.enabled ? direct : status.transports.mqtt;
   const failedDirectInputs = direct?.failed_inputs || [];
-  const directHas404 = direct?.last_error?.includes('404') || failedDirectInputs.some(input => input.error.includes('404'));
-  const systemTitle = status.health.status === 'healthy' ? 'Everything is operational' : status.health.live ? 'Bridge running — attention required' : 'Bridge health problem';
-  const systemDetail = status.health.status === 'healthy'
-    ? 'Roborock, enabled integrations and the data volume are responding normally.'
-    : status.health.reasons?.length
-      ? `Needs attention: ${status.health.reasons.map(humanize).join(', ')}.`
-      : 'Open the technical details below to identify the affected component.';
+  const installedMode = status.update_settings.mode;
 
-  return <PageShell returnSlug={returnSlug}>
-    {error && <div className="rounded-xl border border-red-500/25 bg-red-500/10 p-4 text-sm text-red-600">{error}</div>}
+  return <div className="space-y-6 text-[#15241e]">
+    <header className="flex flex-wrap items-start justify-between gap-4">
+      <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#177b56]">Votre passerelle</p><h1 className="mt-2 text-3xl font-semibold tracking-tight">Système & mises à jour</h1><p className="mt-2 text-sm text-slate-500">Une passerelle à jour, au moment que vous choisissez.</p></div>
+      <button onClick={() => void refreshStatus()} disabled={refreshing || busy} className={secondaryButton}><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />Actualiser</button>
+    </header>
+    {error && <div role="alert" className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />{error}</div>}
 
-    <section className={`overflow-hidden rounded-3xl border p-5 shadow-sm sm:p-6 ${healthTone === 'green' ? 'border-green-500/25 bg-gradient-to-br from-green-500/10 via-card to-card' : healthTone === 'amber' ? 'border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-card to-card' : 'border-red-500/30 bg-gradient-to-br from-red-500/10 via-card to-card'}`}>
-      <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-start gap-4">
-          <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${healthTone === 'green' ? 'bg-green-500/15 text-green-500' : healthTone === 'amber' ? 'bg-amber-500/15 text-amber-500' : 'bg-red-500/15 text-red-500'}`}>
-            {healthTone === 'green' ? <CheckCircle2 className="h-7 w-7" /> : <AlertTriangle className="h-7 w-7" />}
+    <div className="grid gap-5 lg:grid-cols-[0.85fr_1.4fr]">
+      <section className="relative overflow-hidden rounded-2xl bg-[#152f25] p-7 text-white">
+        <div className="absolute -right-12 -top-12 h-52 w-52 rounded-full border-[32px] border-white/[0.035]" aria-hidden="true" />
+        <div className="relative flex h-full flex-col items-start">
+          <div className="mb-9 flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10"><ShieldCheck className="h-6 w-6 text-emerald-200" /></div>
+          <p className="text-sm text-emerald-100/65">Version installée</p><p className="mt-2 break-all text-4xl font-semibold tracking-tight">{status.version}</p>
+          <span className="mt-3 rounded-full bg-white/10 px-3 py-1 text-xs text-emerald-100">{status.channel === 'edge' ? 'Canal de développement' : 'Version stable'}</span>
+          <div className="mt-auto pt-9"><div className="flex items-center gap-2 text-sm font-medium"><span className={`h-2 w-2 rounded-full ${healthy ? 'bg-emerald-300' : 'bg-amber-300'}`} />{healthy ? 'Tout fonctionne normalement' : status.health.live ? 'Un point demande votre attention' : 'La passerelle rencontre un problème'}</div><p className="mt-2 text-xs text-emerald-100/60">En service depuis {formatDuration(status.uptime_seconds)}</p></div>
+        </div>
+      </section>
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-7">
+        <div className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">Mises à jour</h2><p className="mt-1 text-sm text-slate-500">{installedMode === 'automatic' ? 'L’installation automatique est activée dans vos préférences.' : 'Vous gardez la main sur chaque installation.'}</p></div><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#edf6f1] text-[#177b56]"><ArrowDownToLine className="h-5 w-5" /></span></div>
+        <div className="mt-6 rounded-xl bg-[#f5f6f8] p-4"><div className="flex items-start gap-3">{action === 'check' ? <RefreshCw className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-[#177b56]" /> : <CheckCircle2 className={`mt-0.5 h-5 w-5 shrink-0 ${available ? 'text-[#177b56]' : 'text-slate-400'}`} />}<div className="min-w-0"><p className="font-medium">{action === 'check' ? 'Recherche en cours…' : available ? `La version ${update.latest_version} est disponible` : checked ? 'Votre passerelle est à jour' : 'Prêt à rechercher une nouvelle version'}</p><p className="mt-1 text-xs leading-relaxed text-slate-500">{checked ? `Dernière vérification : ${formatDate(update.checked_at)}` : `Canal ${channel === 'stable' ? 'stable' : 'de développement'}. La recherche ne déclenche aucune installation.`}</p></div></div>{update.error && selectedUpdate && <p className="mt-3 text-sm text-amber-700">{update.error}</p>}</div>
+        <div className="mt-5 flex flex-wrap gap-3"><button onClick={() => void check()} disabled={busy} className={available ? secondaryButton : primaryButton}><RefreshCw className={`h-4 w-4 ${action === 'check' ? 'animate-spin' : ''}`} />{action === 'check' ? 'Recherche…' : 'Rechercher une mise à jour'}</button>{available && <button onClick={() => setConfirmInstall(true)} disabled={busy || updaterAvailable !== true || !update.artifact_ready} className={primaryButton}><ArrowDownToLine className="h-4 w-4" />Installer {update.latest_version}</button>}</div>
+        {available && !update.artifact_ready && <p className="mt-3 text-xs leading-relaxed text-amber-700">Cette version est en cours de publication. Relancez la recherche dans quelques minutes pour pouvoir l’installer.</p>}
+        {updaterAvailable === false && !operationActive && <p className="mt-4 text-sm leading-relaxed text-amber-700">Le service de mise à jour est indisponible. Vérifiez que le conteneur <code className="break-all text-xs">roborock-mqtt-loxone-updater</code> fonctionne dans Container Manager.</p>}
+        <div className="mt-6 flex items-start gap-2 border-t border-slate-100 pt-4 text-xs leading-relaxed text-slate-500"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#177b56]" /><span>Vos données sont sauvegardées avant l’installation. Si la nouvelle version échoue aux contrôles, la version précédente est restaurée.</span></div>
+        {checked && (update.release_notes || update.release_url) && <details className="group mt-5 border-t border-slate-100 pt-4"><summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium">Les nouveautés<ChevronDown className="h-4 w-4 text-slate-400 transition group-open:rotate-180" /></summary>{update.release_notes && <pre className="mt-4 max-h-64 overflow-auto whitespace-pre-wrap text-sm leading-relaxed text-slate-600">{update.release_notes}</pre>}{update.release_url && <a href={update.release_url} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-[#177b56]">Voir la publication<ExternalLink className="h-3.5 w-3.5" /></a>}</details>}
+      </section>
+    </div>
+
+    {confirmInstall && available && <section role="alertdialog" aria-labelledby="confirm-update-title" className="rounded-2xl border border-emerald-200 bg-[#edf6f1] p-6"><h2 id="confirm-update-title" className="text-lg font-semibold">Installer la version {update.latest_version} ?</h2><p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">La passerelle redémarrera pendant l’installation. Les échanges avec Loxone et les commandes des robots seront brièvement interrompus. Vos adresses Loxone et vos réglages sont conservés.</p><div className="mt-5 flex flex-wrap gap-3"><button onClick={() => void install()} disabled={busy || updaterAvailable !== true || !update.artifact_ready} className={primaryButton}><ArrowDownToLine className="h-4 w-4" />Confirmer l’installation</button><button onClick={() => setConfirmInstall(false)} className={secondaryButton}>Plus tard</button></div></section>}
+    {operation && operation.stage !== 'idle' && <UpdateProgress operation={operation} reconnecting={operationActive && updaterAvailable === false} />}
+    <section className="grid gap-3 sm:grid-cols-3" aria-label="État des services">
+      <ServiceCard icon={<Wifi className="h-5 w-5" />} label="Connexion Loxone" value={!loxone?.enabled ? 'À configurer' : loxone.connected ? 'Connectée' : 'À vérifier'} good={Boolean(loxone?.enabled && loxone.connected)} detail={loxone?.enabled && loxone.connected ? 'Les échanges sont opérationnels.' : 'Consultez la page Loxone.'} />
+      <ServiceCard icon={<RefreshCw className="h-5 w-5" />} label="Service de mise à jour" value={operationActive ? 'Installation en cours' : updaterAvailable === null ? 'Vérification…' : updaterAvailable ? 'Prêt' : 'Indisponible'} good={updaterAvailable === true} detail={updaterAvailable ? 'Disponible lorsque vous le décidez.' : 'Vérifiez son conteneur sur le NAS.'} />
+      <ServiceCard icon={<Database className="h-5 w-5" />} label="Données & configuration" value={status.data_volume.writable ? 'Stockage disponible' : 'À vérifier'} good={status.data_volume.writable} detail={status.data_volume.writable ? `${formatBytes(status.data_volume.free_bytes)} d’espace libre` : status.data_volume.error || 'Impossible d’écrire dans le volume.'} />
+    </section>
+
+    <details className="group rounded-2xl border border-slate-200 bg-white">
+      <summary className="flex cursor-pointer list-none items-center gap-3 p-6"><Settings2 className="h-5 w-5 text-slate-400" /><div className="min-w-0 flex-1"><h2 className="text-sm font-semibold">Réglages avancés</h2><p className="mt-1 text-xs text-slate-500">Canal, automatisation et diagnostic de la passerelle</p></div><ChevronDown className="h-5 w-5 text-slate-400 transition group-open:rotate-180" /></summary>
+      <div className="space-y-8 border-t border-slate-100 p-6">
+        <section><h3 className="font-semibold">Canal de la recherche manuelle</h3><p className="mt-1 text-sm text-slate-500">Stable est conseillé pour une utilisation quotidienne.</p><select aria-label="Canal de mise à jour manuelle" value={channel} disabled={busy} onChange={event => { setChannel(event.target.value as 'stable' | 'edge'); setConfirmInstall(false); }} className={`${inputClass} max-w-md`}><option value="stable">Stable — versions publiées</option><option value="edge">Développement — dernières nouveautés (Edge)</option></select></section>
+        {settings && <section className="border-t border-slate-100 pt-7"><div className="flex items-center gap-2"><Clock3 className="h-4 w-4 text-[#177b56]" /><h3 className="font-semibold">Préférences de mise à jour</h3></div><p className="mt-2 text-sm text-slate-500">Le mode « Prévenir seulement » recherche les nouveautés sans les installer. Vos préférences existantes restent appliquées.</p>
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <label className="text-sm font-medium">Installation<select value={settings.mode} onChange={event => { setSettings({ ...settings, mode: event.target.value as UpdateSettings['mode'] }); setSettingsSaved(false); }} className={inputClass}><option value="notify">Prévenir seulement — installation manuelle</option><option value="off">Ne pas rechercher automatiquement</option><option value="automatic">Installer automatiquement</option></select></label>
+            <label className="text-sm font-medium">Canal surveillé<select value={settings.channel} onChange={event => { setSettings({ ...settings, channel: event.target.value as UpdateSettings['channel'], allow_edge_automatic: event.target.value === 'edge' ? settings.allow_edge_automatic : false }); setSettingsSaved(false); }} className={inputClass}><option value="stable">Stable</option><option value="edge">Développement (Edge)</option></select></label>
+            <label className="text-sm font-medium">À partir de<input type="time" value={settings.window_start} onChange={event => { setSettings({ ...settings, window_start: event.target.value }); setSettingsSaved(false); }} className={inputClass} /></label>
+            <label className="text-sm font-medium">Jusqu’à<input type="time" value={settings.window_end} onChange={event => { setSettings({ ...settings, window_end: event.target.value }); setSettingsSaved(false); }} className={inputClass} /></label>
+            <label className="text-sm font-medium">Délai après publication (heures)<input type="number" min="1" max="720" value={settings.delay_hours} onChange={event => { setSettings({ ...settings, delay_hours: Number(event.target.value) }); setSettingsSaved(false); }} className={inputClass} /></label>
+            <div><p className="text-sm font-medium">Jours autorisés</p><div className="mt-2 flex flex-wrap gap-1.5">{[{ label: 'Lun', value: 1 }, { label: 'Mar', value: 2 }, { label: 'Mer', value: 3 }, { label: 'Jeu', value: 4 }, { label: 'Ven', value: 5 }, { label: 'Sam', value: 6 }, { label: 'Dim', value: 0 }].map(day => <button key={day.value} aria-pressed={settings.allowed_days.includes(day.value)} onClick={() => { setSettings({ ...settings, allowed_days: settings.allowed_days.includes(day.value) ? settings.allowed_days.filter(value => value !== day.value) : [...settings.allowed_days, day.value].sort() }); setSettingsSaved(false); }} className={`min-h-11 rounded-xl px-3 text-xs font-medium ${settings.allowed_days.includes(day.value) ? 'bg-[#177b56] text-white' : 'bg-[#f5f6f8] text-slate-500'}`}>{day.label}</button>)}</div></div>
           </div>
-          <div><div className="flex flex-wrap items-center gap-2"><h2 className="text-xl font-semibold">{systemTitle}</h2><Pill tone={healthTone}>{humanize(status.health.status)}</Pill></div><p className="mt-1 max-w-2xl text-sm text-muted-foreground">{systemDetail}</p><p className="mt-2 text-xs text-muted-foreground">Uptime {formatDuration(status.uptime_seconds)} · version {status.version} · {status.architecture}</p></div>
-        </div>
-        <button onClick={() => void refreshStatus()} disabled={refreshing} className="touch-target inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-border bg-background/70 px-4 text-sm font-medium hover:bg-accent disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />{refreshing ? 'Refreshing…' : 'Refresh status'}</button>
-      </div>
-    </section>
-
-    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <ServiceCard icon={<Server />} label="Bridge" value={status.health.live ? 'Running' : 'Problem'} tone={status.health.live ? 'green' : 'red'} detail={`Ready ${yesNo(status.health.ready)} · ${formatDuration(status.uptime_seconds)}`} />
-      <ServiceCard icon={<Wifi />} label="Direct Loxone" value={!direct?.enabled ? 'Disabled' : direct.connected ? 'Connected' : 'Needs attention'} tone={!direct?.enabled ? 'gray' : direct.connected ? 'green' : 'amber'} detail={!direct?.enabled ? 'Enable it in Integration Mode' : direct.last_error || (direct.last_success ? `Last sent ${formatDate(direct.last_success)}` : 'Waiting for first transmission')} />
-      <ServiceCard icon={<RefreshCw />} label="Safe updater" value={updaterAvailable === null ? 'Checking…' : updaterAvailable ? 'Ready' : 'Not running'} tone={updaterAvailable === null ? 'gray' : updaterAvailable ? 'green' : 'amber'} detail={updaterAvailable ? 'Backup and rollback available' : 'Manual Docker updates still work'} />
-      <ServiceCard icon={<Database />} label="Data volume" value={status.data_volume.writable ? 'Protected' : 'Problem'} tone={status.data_volume.writable ? 'green' : 'red'} detail={status.data_volume.writable ? `${formatBytes(status.data_volume.free_bytes)} available` : status.data_volume.error || 'Volume is not writable'} />
-    </section>
-
-    {directHas404 && <section className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5 shadow-sm">
-      <div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-amber-500" /><div><h2 className="text-lg font-semibold">Why Direct Loxone shows HTTP 404</h2><p className="mt-1 text-sm text-muted-foreground">The Miniserver is reachable and authentication works, but it cannot find one or more Virtual Inputs. Their names are case-sensitive and must exist in Loxone Config before the bridge can send values.</p></div></div>
-      <div className="mt-5 grid gap-3 md:grid-cols-3">
-        <SetupStep number="1" title="Open Loxone Config">Go to <strong>Periphery → Virtual Inputs</strong>.</SetupStep>
-        <SetupStep number="2" title="Create the missing inputs">Use the exact names and types listed below. Do not add spaces or rename them.</SetupStep>
-        <SetupStep number="3" title="Save and resend">Save the project to the Miniserver, then open Loxone Integration and choose <strong>Resend all states</strong>.</SetupStep>
-      </div>
-      {failedDirectInputs.length > 0 ? <div className="mt-5 overflow-hidden rounded-xl border border-border bg-background/60"><div className="border-b border-border px-4 py-3"><strong className="text-sm">Virtual Inputs currently rejected by Loxone</strong></div><div className="divide-y divide-border">{failedDirectInputs.map(input => <div key={`${input.name}-${input.field}`} className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_100px_minmax(0,1.2fr)] sm:items-center"><code className="break-all text-sm font-semibold text-primary">{input.name}</code><Pill tone="gray">{humanize(input.kind)}</Pill><span className="text-xs text-muted-foreground">{inputPurpose(input.field)}</span></div>)}</div></div> : <p className="mt-4 rounded-xl border border-border bg-background/60 p-4 text-sm text-muted-foreground">Open <Link to="/loxone" className="font-medium text-primary underline underline-offset-4">Loxone Integration</Link> and expand <strong>Virtual Inputs</strong> to copy the complete list.</p>}
-      <div className="mt-4 flex flex-col gap-3 rounded-xl bg-background/60 p-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs text-muted-foreground"><strong className="text-foreground">Important:</strong> these are monitoring inputs only. They cannot start, stop or shut down the robot, bridge or Miniserver.</p><Link to="/loxone" className="touch-target inline-flex shrink-0 items-center justify-center rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground">Open Loxone Integration</Link></div>
-    </section>}
-
-    <Card title="Updates" icon={<RefreshCw className="h-5 w-5" />}>
-      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
-        <div><label className="text-sm font-medium">Channel</label><div className="mt-2 grid max-w-md grid-cols-2 rounded-xl bg-muted p-1"><ChannelButton active={channel === 'stable'} onClick={() => setChannel('stable')} title="Stable" subtitle="Recommended releases" /><ChannelButton active={channel === 'edge'} onClick={() => setChannel('edge')} title="Beta / Edge" subtitle="Latest main build" /></div></div>
-        <button onClick={() => void check()} disabled={busy} className="touch-target inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-5 font-medium text-primary-foreground disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} />{busy ? 'Checking…' : 'Check for updates'}</button>
-      </div>
-      <div className={`mt-5 rounded-xl border p-4 ${update.checked_at ? update.available ? 'border-blue-500/30 bg-blue-500/5' : 'border-green-500/30 bg-green-500/5' : 'border-border bg-muted/30'}`}>
-        {!update.checked_at ? <p className="text-sm text-muted-foreground">No update check has been performed since this bridge started.</p> : <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3">{update.available ? <AlertTriangle className="mt-0.5 h-5 w-5 text-blue-500" /> : <CheckCircle2 className="mt-0.5 h-5 w-5 text-green-500" />}<div><strong>{update.available ? `Version ${update.latest_version} is available` : 'You are up to date'}</strong><p className="mt-1 text-xs text-muted-foreground">Checked {formatDate(update.checked_at)}{update.published_at ? ` · Published ${formatDate(update.published_at)}` : ''}</p></div></div><div className="flex gap-2">{update.release_notes && <button onClick={() => setShowNotes(value => !value)} className="touch-target rounded-lg border border-border px-3 text-sm hover:bg-accent">View release notes</button>}{update.release_url && <a href={update.release_url} target="_blank" rel="noreferrer" className="touch-target inline-flex items-center gap-1 rounded-lg border border-border px-3 text-sm hover:bg-accent">GitHub <ExternalLink className="h-3.5 w-3.5" /></a>}</div></div>}
-        {showNotes && update.release_notes && <pre className="mt-4 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-background p-4 text-sm leading-relaxed">{update.release_notes}</pre>}
-      </div>
-      {update.available && update.checked_at && <div className="mt-4 rounded-xl border border-amber-500/25 bg-amber-500/5 p-4">{!update.artifact_ready ? <div className="flex items-start gap-3"><RefreshCw className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-blue-500" /><div><strong>Docker image is still being published</strong><p className="mt-1 text-xs text-muted-foreground">The update is visible on GitHub, but its exact multi-architecture image is not ready yet ({humanize(update.artifact_status || 'pending')}). Installation will unlock automatically after a new check confirms publication.</p></div></div> : !confirmInstall ? <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><strong>Manual installation</strong><p className="mt-1 text-xs text-muted-foreground">The isolated updater backs up the data volume, verifies commit {shortCommit(update.latest_commit || update.latest_version || '')}, and rolls back automatically if the new bridge is unhealthy or incorrect.</p></div><button onClick={() => setConfirmInstall(true)} disabled={busy || updaterAvailable !== true || Boolean(operation && activeUpdateStages.has(operation.stage))} className="touch-target rounded-xl bg-amber-500 px-5 font-medium text-black disabled:opacity-50">Install update</button></div> : <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><strong>Confirm installation of {update.latest_version}</strong><p className="mt-1 text-xs text-muted-foreground">Robot commands and the Web interface will be briefly unavailable during restart.</p></div><div className="flex gap-2"><button onClick={() => setConfirmInstall(false)} className="touch-target rounded-xl border border-border px-4">Cancel</button><button onClick={() => void install()} className="touch-target rounded-xl bg-red-600 px-4 font-medium text-white">Confirm & install</button></div></div>}</div>}
-      {updaterAvailable === false && <div className="mt-4 flex flex-col gap-3 rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" /><div><strong className="text-sm">Safe updater is not running</strong><p className="mt-1 text-xs text-muted-foreground">Update checks still work. To install from this page, start the optional updater container once on your Synology.</p></div></div><code className="shrink-0 rounded-lg bg-background px-3 py-2 text-xs">docker compose --profile updates up -d</code></div>}
-      {operation && operation.stage !== 'idle' && <UpdateProgress operation={operation} />}
-      <div className="mt-4 flex items-start gap-2 text-xs text-muted-foreground"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-green-500" /><span>The bridge only sends an authenticated allowlisted request. Docker access remains confined to the isolated updater.</span></div>
-    </Card>
-
-    {settings && <details className="group rounded-2xl border border-border bg-card shadow-sm">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-5"><div className="flex items-center gap-3"><span className="text-primary"><Clock3 className="h-5 w-5" /></span><div><div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold">Automatic update policy</h2><Pill tone={settings.mode === 'automatic' ? 'green' : settings.mode === 'notify' ? 'blue' : 'gray'}>{settings.mode === 'automatic' ? 'Automatic' : settings.mode === 'notify' ? 'Notify only' : 'Off'}</Pill></div><p className="mt-0.5 text-xs text-muted-foreground">{settings.channel === 'edge' ? 'Beta / Edge' : 'Stable'} · {settings.window_start}–{settings.window_end} · safety guards enabled</p></div></div><ChevronDown className="h-5 w-5 text-muted-foreground transition-transform group-open:rotate-180" /></summary>
-      <div className="border-t border-border p-5"><div className="grid gap-4 lg:grid-cols-2">
-        <label className="text-sm"><span className="font-medium">Mode</span><select value={settings.mode} onChange={event => setSettings({ ...settings, mode: event.target.value as UpdateSettings['mode'] })} className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2"><option value="off">Off</option><option value="notify">Notify only (recommended)</option><option value="automatic">Automatic</option></select></label>
-        <label className="text-sm"><span className="font-medium">Channel</span><select value={settings.channel} onChange={event => setSettings({ ...settings, channel: event.target.value as UpdateSettings['channel'], allow_edge_automatic: event.target.value === 'edge' ? settings.allow_edge_automatic : false })} className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2"><option value="stable">Stable</option><option value="edge">Beta / Edge</option></select></label>
-        <label className="text-sm"><span className="font-medium">Allowed from</span><input type="time" value={settings.window_start} onChange={event => setSettings({ ...settings, window_start: event.target.value })} className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
-        <label className="text-sm"><span className="font-medium">Allowed until</span><input type="time" value={settings.window_end} onChange={event => setSettings({ ...settings, window_end: event.target.value })} className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
-        <label className="text-sm"><span className="font-medium">Delay after publication</span><div className="mt-2 flex items-center gap-2"><input type="number" min="1" max="720" value={settings.delay_hours} onChange={event => setSettings({ ...settings, delay_hours: Number(event.target.value) })} className="w-28 rounded-xl border border-border bg-background px-3 py-2" /><span className="text-muted-foreground">hours</span></div></label>
-        <div className="text-sm"><span className="font-medium">Allowed days</span><div className="mt-2 flex flex-wrap gap-1">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, index) => <button key={day} onClick={() => setSettings({ ...settings, allowed_days: settings.allowed_days.includes(index) ? settings.allowed_days.filter(value => value !== index) : [...settings.allowed_days, index].sort() })} className={`rounded-lg px-2.5 py-2 text-xs ${settings.allowed_days.includes(index) ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>{day}</button>)}</div></div>
-      </div>
-      <div className="mt-5 grid gap-2 sm:grid-cols-3"><PolicyCheck checked={settings.prevent_robot_active} label="Block while robot active" onChange={value => setSettings({ ...settings, prevent_robot_active: value })} /><PolicyCheck checked={settings.prevent_cleaning} label="Block during cleaning" onChange={value => setSettings({ ...settings, prevent_cleaning: value })} /><PolicyCheck checked={settings.prevent_command_in_progress} label="Block with command running" onChange={value => setSettings({ ...settings, prevent_command_in_progress: value })} /></div>
-      {settings.mode === 'automatic' && settings.channel === 'edge' && <label className="mt-4 flex items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/5 p-4 text-sm"><input type="checkbox" checked={settings.allow_edge_automatic} onChange={event => setSettings({ ...settings, allow_edge_automatic: event.target.checked })} className="mt-1" /><span><strong>I explicitly authorize automatic Edge updates.</strong><span className="mt-1 block text-xs text-muted-foreground">Edge follows every successful build from main and is never automatic without this separate consent.</span></span></label>}
-      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="text-xs text-muted-foreground"><strong className="text-foreground">Scheduler:</strong> {status.auto_update.last_decision || 'Waiting for first evaluation'}{status.auto_update.next_window && ` · Next window ${formatDate(status.auto_update.next_window)}`}{status.auto_update.last_error && <span className="block text-red-500">{status.auto_update.last_error}</span>}</div><button onClick={() => void savePolicy()} disabled={busy || settings.allowed_days.length === 0 || (settings.mode === 'automatic' && settings.channel === 'edge' && !settings.allow_edge_automatic)} className="touch-target rounded-xl bg-primary px-5 font-medium text-primary-foreground disabled:opacity-50">{settingsSaved ? 'Saved' : 'Save update policy'}</button></div></div>
-    </details>}
-
-    <details className="group rounded-2xl border border-border bg-card shadow-sm">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-5"><div className="flex items-center gap-3"><span className="text-primary"><Activity className="h-5 w-5" /></span><div><h2 className="font-semibold">Technical details</h2><p className="mt-0.5 text-xs text-muted-foreground">Build, transports, watchdog and individual health checks</p></div></div><ChevronDown className="h-5 w-5 text-muted-foreground transition-transform group-open:rotate-180" /></summary>
-      <div className="border-t border-border p-5">
-        <div className="grid gap-5 lg:grid-cols-2">
-          <div><h3 className="mb-2 font-medium">Installed build</h3><KeyValue label="Version" value={status.version} badge={status.channel === 'edge' ? 'Beta / Edge' : 'Stable'} /><KeyValue label="Git commit" value={shortCommit(status.git_commit)} mono /><KeyValue label="Build time" value={formatDate(status.build_time)} /><KeyValue label="Architecture" value={`${status.architecture} · ${status.go_version}`} /><KeyValue label="Last restart" value={formatDate(status.last_restart)} /><KeyValue label="Watchdog" value={status.last_watchdog_reason || 'No recovery recorded'} /><KeyValue label="Supervisor" value={`${status.supervisor.kind} · ${status.supervisor.log_mode}`} /></div>
-          <div><h3 className="mb-2 font-medium">Transports</h3>{Object.entries(status.transports).map(([name, transport]) => <div key={name} className="flex items-start justify-between gap-4 border-b border-border py-3 last:border-0"><div className="min-w-0"><strong className="capitalize">{name === 'direct' ? 'Direct Loxone' : name}</strong><p className="mt-1 text-xs text-muted-foreground">{transport.enabled ? (transport.last_success ? `Last success ${formatDate(transport.last_success)}` : 'Waiting for first successful transmission') : 'Disabled'}</p>{transport.last_error && <p className="mt-1 break-words text-xs text-red-500">{transport.last_error}</p>}</div><Pill tone={!transport.enabled ? 'gray' : transport.connected ? 'green' : 'red'}>{!transport.enabled ? 'Off' : transport.connected ? 'Connected' : 'Unavailable'}</Pill></div>)}</div>
-        </div>
-        <h3 className="mb-3 mt-6 font-medium">Health checks</h3>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(status.health.components || {}).map(([name, component]) => <div key={name} className="rounded-xl border border-border p-3"><div className="flex items-center justify-between gap-2"><strong className="text-sm">{humanize(name)}</strong><Pill tone={component.healthy ? 'green' : component.required ? 'red' : 'gray'}>{component.healthy ? 'OK' : component.required ? 'Problem' : 'Optional'}</Pill></div><p className="mt-2 text-xs text-muted-foreground">{component.detail || (component.last_activity ? formatDate(component.last_activity) : 'No detail')}</p></div>)}</div>
+          <div className="mt-5 grid gap-2 lg:grid-cols-3"><PolicyCheck checked={settings.prevent_robot_active} label="Attendre que les robots soient inactifs" onChange={value => { setSettings({ ...settings, prevent_robot_active: value }); setSettingsSaved(false); }} /><PolicyCheck checked={settings.prevent_cleaning} label="Attendre la fin des nettoyages" onChange={value => { setSettings({ ...settings, prevent_cleaning: value }); setSettingsSaved(false); }} /><PolicyCheck checked={settings.prevent_command_in_progress} label="Attendre la fin des commandes" onChange={value => { setSettings({ ...settings, prevent_command_in_progress: value }); setSettingsSaved(false); }} /></div>
+          {settings.mode === 'automatic' && settings.channel === 'edge' && <label className="mt-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm"><input type="checkbox" checked={settings.allow_edge_automatic} onChange={event => { setSettings({ ...settings, allow_edge_automatic: event.target.checked }); setSettingsSaved(false); }} className="mt-1 accent-[#177b56]" /><span>J’autorise explicitement l’installation automatique des versions de développement (Edge).</span></label>}
+          <div className="mt-5 flex flex-wrap items-center gap-4"><button onClick={() => void savePolicy()} disabled={busy || settings.allowed_days.length === 0 || (settings.mode === 'automatic' && settings.channel === 'edge' && !settings.allow_edge_automatic)} className={primaryButton}>{settingsSaved ? <Check className="h-4 w-4" /> : null}{action === 'settings' ? 'Enregistrement…' : settingsSaved ? 'Préférences enregistrées' : 'Enregistrer les préférences'}</button>{settings.allowed_days.length === 0 && <p className="text-xs text-amber-700">Choisissez au moins un jour.</p>}</div>
+        </section>}
+        <section className="border-t border-slate-100 pt-7"><div className="flex items-center gap-2"><Activity className="h-4 w-4 text-[#177b56]" /><h3 className="font-semibold">Diagnostic technique</h3></div>
+          <div className="mt-4 grid gap-6 lg:grid-cols-2"><div><KeyValue label="Version / canal" value={`${status.version} / ${status.channel}`} /><KeyValue label="Révision" value={shortCommit(status.git_commit)} /><KeyValue label="Date de compilation" value={formatDate(status.build_time)} /><KeyValue label="Architecture" value={`${status.architecture} · ${status.go_version}`} /><KeyValue label="Dernier redémarrage" value={formatDate(status.last_restart)} /><KeyValue label="Récupération automatique" value={status.last_watchdog_reason || 'Aucune enregistrée'} /><KeyValue label="Superviseur" value={`${status.supervisor.kind} · ${status.supervisor.log_mode}`} /></div><div>{Object.entries(status.transports).map(([name, transport]) => <div key={name} className="border-b border-slate-100 py-3 last:border-0"><div className="flex justify-between gap-3"><span className="text-sm font-medium">{transportName(name)}</span><span className={`text-xs ${!transport.enabled ? 'text-slate-400' : transport.connected ? 'text-[#177b56]' : 'text-amber-700'}`}>{!transport.enabled ? 'Désactivé' : transport.connected ? 'Connecté' : 'À vérifier'}</span></div>{transport.last_success && <p className="mt-1 text-xs text-slate-500">Dernier échange : {formatDate(transport.last_success)}</p>}{transport.last_error && <p className="mt-2 break-words text-xs text-amber-700">{transport.last_error}</p>}</div>)}</div></div>
+          {failedDirectInputs.length > 0 && <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4"><p className="text-sm font-medium">Entrées refusées par le Miniserver</p><p className="mt-1 text-xs leading-relaxed text-amber-800">Vérifiez leur nom exact dans Loxone Config, puis enregistrez le projet dans le Miniserver.</p><div className="mt-3 space-y-2">{failedDirectInputs.map(input => <p key={`${input.name}-${input.field}`} className="break-all text-xs"><code>{input.name}</code> — {input.error}</p>)}</div><Link to="/loxone" className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-[#177b56]">Ouvrir la connexion Loxone<ArrowRight className="h-4 w-4" /></Link></div>}
+          <div className="mt-5 grid gap-2 sm:grid-cols-2">{Object.entries(status.health.components || {}).map(([name, component]) => <div key={name} className="rounded-xl bg-[#f5f6f8] p-3"><div className="flex justify-between gap-2"><span className="text-xs font-medium">{componentName(name)}</span><span className={`text-xs ${component.healthy ? 'text-[#177b56]' : component.required ? 'text-amber-700' : 'text-slate-400'}`}>{component.healthy ? 'OK' : component.required ? 'À vérifier' : 'Optionnel'}</span></div>{component.detail && <p className="mt-1 break-words text-xs text-slate-500">{component.detail}</p>}</div>)}</div>
+          <div className="mt-5 rounded-xl bg-[#f5f6f8] p-4 text-xs leading-relaxed text-slate-500"><p>Planificateur : {status.auto_update.last_decision || 'En attente de la première vérification.'}</p>{status.auto_update.next_window && <p className="mt-1">Prochaine plage : {formatDate(status.auto_update.next_window)}</p>}{status.auto_update.last_error && <p className="mt-1 text-amber-700">{status.auto_update.last_error}</p>}<p className="mt-2">Les journaux complets sont disponibles dans Container Manager → roborock-mqtt-loxone → Journal.</p></div>
+        </section>
       </div>
     </details>
-  </PageShell>;
+  </div>;
 }
 
-function PageShell({ returnSlug, children }: { returnSlug?: string; children: React.ReactNode }) { return <div className="min-h-screen bg-background p-4 text-foreground md:p-8"><main className="mx-auto max-w-6xl space-y-5"><header className="flex items-center gap-3">{returnSlug && <Link to={`/devices/${returnSlug}`} className="touch-target inline-flex items-center justify-center rounded-xl border border-border hover:bg-accent"><ArrowLeft className="h-5 w-5" /></Link>}<div><h1 className="text-2xl font-bold">System & Updates</h1><p className="text-sm text-muted-foreground">Runtime health, installed build and safe update discovery</p></div></header>{children}</main></div>; }
-function Card({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) { return <section className="rounded-2xl border border-border bg-card p-5 shadow-sm"><div className="mb-4 flex items-center gap-2"><span className="text-primary">{icon}</span><h2 className="text-lg font-semibold">{title}</h2></div>{children}</section>; }
-function ServiceCard({ icon, label, value, detail, tone }: { icon: React.ReactNode; label: string; value: string; detail: string; tone: string }) { const color = tone === 'green' ? 'text-green-500 bg-green-500/10' : tone === 'amber' ? 'text-amber-500 bg-amber-500/10' : tone === 'red' ? 'text-red-500 bg-red-500/10' : 'text-muted-foreground bg-muted'; return <div className="min-w-0 rounded-2xl border border-border bg-card p-4 shadow-sm"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${color}`}>{icon}</span><div className="min-w-0"><span className="block text-xs text-muted-foreground">{label}</span><strong className="block truncate text-base">{value}</strong></div></div><p className={`mt-3 line-clamp-2 min-h-8 text-xs ${tone === 'red' || tone === 'amber' ? 'text-foreground/75' : 'text-muted-foreground'}`} title={detail}>{detail}</p></div>; }
-function LoadingState({ error, onRetry }: { error: string; onRetry: () => void }) { return <div className="rounded-3xl border border-border bg-card p-8 shadow-sm"><div className="mx-auto flex max-w-md flex-col items-center text-center">{error ? <AlertTriangle className="h-9 w-9 text-red-500" /> : <RefreshCw className="h-9 w-9 animate-spin text-primary" />}<h2 className="mt-4 text-lg font-semibold">{error ? 'Unable to load system status' : 'Loading system status'}</h2><p className="mt-2 text-sm text-muted-foreground">{error || 'Checking the bridge, integrations and updater…'}</p>{error && <button onClick={onRetry} className="touch-target mt-5 inline-flex items-center gap-2 rounded-xl bg-primary px-5 text-sm font-medium text-primary-foreground"><RefreshCw className="h-4 w-4" />Try again</button>}</div></div>; }
-function SetupStep({ number, title, children }: { number: string; title: string; children: React.ReactNode }) { return <div className="rounded-xl border border-amber-500/15 bg-background/60 p-4"><div className="flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-amber-500 text-xs font-bold text-black">{number}</span><strong className="text-sm">{title}</strong></div><p className="mt-2 text-xs leading-relaxed text-muted-foreground">{children}</p></div>; }
-function KeyValue({ label, value, mono = false, badge }: { label: string; value: string; mono?: boolean; badge?: string }) { return <div className="flex items-center justify-between gap-4 border-b border-border py-3 last:border-0"><span className="text-sm text-muted-foreground">{label}</span><span className={`min-w-0 truncate text-right text-sm ${mono ? 'font-mono' : ''}`}>{value}{badge && <span className="ml-2 rounded-full bg-blue-500/10 px-2 py-0.5 text-xs text-blue-600">{badge}</span>}</span></div>; }
-function Pill({ tone, children }: { tone: string; children: React.ReactNode }) { const color = tone === 'green' ? 'bg-green-500/10 text-green-600' : tone === 'red' ? 'bg-red-500/10 text-red-600' : tone === 'amber' ? 'bg-amber-500/10 text-amber-600' : 'bg-muted text-muted-foreground'; return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${color}`}>{children}</span>; }
-function ChannelButton({ active, onClick, title, subtitle }: { active: boolean; onClick: () => void; title: string; subtitle: string }) { return <button onClick={onClick} className={`rounded-lg p-2 text-left transition ${active ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}><strong className="block text-sm">{title}</strong><span className="text-[11px]">{subtitle}</span></button>; }
-function PolicyCheck({ checked, label, onChange }: { checked: boolean; label: string; onChange: (value: boolean) => void }) { return <label className="flex items-center gap-2 rounded-xl border border-border p-3 text-sm"><input type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)} /><span>{label}</span></label>; }
-function UpdateProgress({ operation }: { operation: UpdateOperation }) { const stages = ['preparing', 'pulling', 'backing_up', 'restarting', 'validating', 'success']; const current = stages.indexOf(operation.stage); return <div className={`mt-4 rounded-xl border p-4 ${operation.stage === 'failed' ? 'border-red-500/30 bg-red-500/5' : operation.stage === 'success' ? 'border-green-500/30 bg-green-500/5' : 'border-blue-500/30 bg-blue-500/5'}`}><div className="flex items-center justify-between gap-3"><strong>{operation.stage === 'failed' ? 'Update failed' : operation.stage === 'rollback' ? 'Rollback in progress' : operation.stage === 'success' ? 'Update installed' : 'Update in progress'}</strong><Pill tone={operation.stage === 'failed' ? 'red' : operation.stage === 'success' ? 'green' : 'gray'}>{humanize(operation.stage)}</Pill></div><div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-6">{stages.map((stage, index) => <div key={stage} className={`rounded-lg px-2 py-2 text-center text-[11px] ${index <= current ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>{humanize(stage)}</div>)}</div>{operation.error && <p className="mt-3 text-sm text-red-600">{operation.error}</p>}{operation.rollback_error && <p className="mt-1 text-xs text-red-600">Rollback: {operation.rollback_error}</p>}<p className="mt-3 text-xs text-muted-foreground">Operation {operation.id || 'unknown'} · Last update {formatDate(operation.updated_at)}</p></div>; }
-const yesNo = (value: boolean) => value ? 'OK' : 'KO';
-const humanize = (value: string) => value.replace(/_/g, ' ').replace(/\b\w/g, (letter: string) => letter.toUpperCase());
-const inputPurpose = (field: string) => ({ bridge_alive: 'Bridge process running (digital)', cloud_connected: 'Roborock cloud connection (digital)', bridge_heartbeat: 'Timestamp sent every 30 seconds (analog)', robot_online: 'Robot reachable (digital)', running: 'Cleaning mission active (digital)' }[field] || `${humanize(field)} value`);
+function ServiceCard({ icon, label, value, detail, good }: { icon: ReactNode; label: string; value: string; detail: string; good: boolean }) {
+  return <div className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex items-center gap-3"><span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${good ? 'bg-[#edf6f1] text-[#177b56]' : 'bg-amber-50 text-amber-600'}`}>{icon}</span><div><p className="text-xs text-slate-500">{label}</p><p className="mt-1 text-sm font-semibold">{value}</p></div></div><p className="mt-3 text-xs leading-relaxed text-slate-500">{detail}</p></div>;
+}
+function KeyValue({ label, value }: { label: string; value: string }) {
+  return <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 py-3 text-xs last:border-0"><span className="text-slate-500">{label}</span><span className="break-all text-right">{value}</span></div>;
+}
+function PolicyCheck({ checked, label, onChange }: { checked: boolean; label: string; onChange: (value: boolean) => void }) {
+  return <label className="flex items-start gap-2.5 rounded-xl border border-slate-200 p-3 text-xs leading-relaxed"><input type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)} className="mt-0.5 accent-[#177b56]" /><span>{label}</span></label>;
+}
+function UpdateProgress({ operation, reconnecting }: { operation: UpdateOperation; reconnecting: boolean }) {
+  const stages = ['preparing', 'pulling', 'backing_up', 'restarting', 'validating', 'success'];
+  const labels: Record<string, string> = { preparing: 'Préparation', pulling: 'Téléchargement', backing_up: 'Sauvegarde', restarting: 'Redémarrage', validating: 'Vérification', success: 'Terminé', rollback: 'Restauration', failed: 'Échec' };
+  const current = stages.indexOf(operation.stage);
+  const failed = operation.stage === 'failed';
+  const complete = operation.stage === 'success';
+  return <section role="status" aria-live="polite" className={`rounded-2xl border bg-white p-6 ${failed ? 'border-red-200' : 'border-slate-200'}`}><div className="flex items-center gap-3"><span className={`flex h-10 w-10 items-center justify-center rounded-xl ${failed ? 'bg-red-50 text-red-600' : 'bg-[#edf6f1] text-[#177b56]'}`}>{complete ? <CheckCircle2 className="h-5 w-5" /> : failed ? <AlertCircle className="h-5 w-5" /> : <RefreshCw className="h-5 w-5 animate-spin" />}</span><div><h2 className="font-semibold">{failed ? 'La mise à jour n’a pas abouti' : operation.stage === 'rollback' ? 'Restauration de la version précédente' : complete ? 'Votre passerelle a été mise à jour' : 'Installation en cours'}</h2><p className="mt-1 text-xs text-slate-500">{reconnecting ? 'La passerelle redémarre. Reconnexion automatique en cours…' : complete ? 'Les échanges avec Loxone peuvent reprendre.' : 'Vous pouvez revenir sur cette page pour retrouver la progression.'}</p></div></div><div className="mt-5 grid grid-cols-3 gap-2 sm:grid-cols-6">{stages.map((stage, index) => <div key={stage} className={`rounded-lg px-2 py-2.5 text-center text-[11px] ${index <= current ? 'bg-[#edf6f1] font-medium text-[#177b56]' : 'bg-[#f5f6f8] text-slate-400'}`}>{labels[stage]}</div>)}</div>{operation.error && <p className="mt-4 break-words text-sm text-red-700">{operation.error}</p>}{operation.rollback_error && <p className="mt-2 break-words text-sm text-red-700">Restauration : {operation.rollback_error}</p>}<p className="mt-4 text-xs text-slate-400">{labels[operation.stage] || operation.stage} · {formatDate(operation.updated_at)}</p></section>;
+}
+
+const errorMessage = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 const shortCommit = (value: string) => value.length > 12 ? value.slice(0, 12) : value;
-const formatDate = (value?: string) => !value || value === 'unknown' ? 'Unknown' : new Date(value).toLocaleString();
-const formatDuration = (seconds: number) => { const days = Math.floor(seconds / 86400); const hours = Math.floor(seconds % 86400 / 3600); const minutes = Math.floor(seconds % 3600 / 60); return days > 0 ? `${days}d ${hours}h` : hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`; };
-const formatBytes = (bytes: number) => bytes > 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(0)} MB`;
+const formatDate = (value?: string) => !value || value === 'unknown' || Number.isNaN(Date.parse(value)) ? 'Non disponible' : new Date(value).toLocaleString('fr-FR');
+const formatDuration = (seconds: number) => { const days = Math.floor(seconds / 86400); const hours = Math.floor(seconds % 86400 / 3600); const minutes = Math.floor(seconds % 3600 / 60); return days > 0 ? `${days} j ${hours} h` : hours > 0 ? `${hours} h ${minutes} min` : `${minutes} min`; };
+const formatBytes = (bytes: number) => bytes > 1024 ** 3 ? `${(bytes / 1024 ** 3).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Go` : `${(bytes / 1024 ** 2).toFixed(0)} Mo`;
+const transportName = (name: string) => ({ direct: 'Loxone HTTP', loxone: 'Loxone MQTT', mqtt: 'MQTT', cloud: 'Roborock Cloud', roborock: 'Roborock Cloud' }[name] || name);
+const componentName = (name: string) => ({ cloud: 'Roborock Cloud', roborock: 'Roborock', mqtt: 'MQTT', direct: 'Loxone HTTP', loxone_direct: 'Loxone HTTP', loxone: 'Loxone MQTT', storage: 'Stockage', data_volume: 'Données', polling: 'Actualisation des robots', web: 'Interface web' }[name] || name.replace(/_/g, ' '));

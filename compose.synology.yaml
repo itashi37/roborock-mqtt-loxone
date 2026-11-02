@@ -1,0 +1,63 @@
+# Installation simple : importer ce fichier dans Container Manager > Projet.
+# Images publiées ; aucune compilation et aucun courtier MQTT requis.
+# Installation existante : conserver le port et ROBOROCK_DATA_DIR actuels.
+name: roborock-mqtt-loxone
+
+services:
+  bridge:
+    image: "${ROBOROCK_IMAGE:-ghcr.io/itashi37/roborock-mqtt-loxone:latest}"
+    container_name: roborock-mqtt-loxone
+    restart: unless-stopped
+    ports:
+      - "${ROBOROCK_WEB_PORT:-8080}:8080"
+    volumes:
+      - "${ROBOROCK_DATA_DIR:-roborock-data}:/var/lib/roborock-mqtt-loxone"
+    environment:
+      TZ: "${TZ:-Europe/Paris}"
+      ROBOROCK_SUPERVISOR: docker
+    networks:
+      - roborock
+
+  updater:
+    image: "${ROBOROCK_IMAGE:-ghcr.io/itashi37/roborock-mqtt-loxone:latest}"
+    container_name: roborock-mqtt-loxone-updater
+    restart: unless-stopped
+    depends_on:
+      bridge:
+        condition: service_healthy
+    entrypoint: ["/roborock-updater"]
+    expose:
+      - "8090"
+    healthcheck:
+      test: ["CMD", "/roborock-updater", "--healthcheck", "http://127.0.0.1:8090/v1/health"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+    environment:
+      UPDATER_TOKEN_FILE: /bridge-data/updater-token
+      BRIDGE_CONTAINER: roborock-mqtt-loxone
+      BRIDGE_STATUS_URL: http://roborock-mqtt-loxone:8080/api/system/status
+      BRIDGE_DATA_DIR: /bridge-data
+      DOCKER_SOCKET: /var/run/docker.sock
+      TZ: "${TZ:-Europe/Paris}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - "${ROBOROCK_DATA_DIR:-roborock-data}:/bridge-data"
+    group_add:
+      - "${DOCKER_GID:-0}"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    networks:
+      - roborock
+
+networks:
+  roborock:
+
+volumes:
+  roborock-data:

@@ -5,4 +5,5 @@ app/web/dist/
 app/web/node_modules/
 production/config/.session
 app/web/tsconfig.tsbuildinfo
+app/web/qa/artifacts*/
 production/config/schedules

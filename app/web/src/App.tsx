@@ -1,498 +1,137 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Routes, Route, Navigate, useParams, useNavigate, Link } from 'react-router-dom';
-import { Battery, Sun, Moon, Wifi, WifiOff, Play, Pause, Home, Wind, Droplets, AlertCircle, Clock, MapPin, LogOut, ChevronRight, Wrench, Network, ServerCog } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, NavLink, Navigate, Route, Routes, useParams } from 'react-router-dom';
+import { ArrowDownToLine, ArrowRight, ArrowUpRight, Battery, Bot, Check, ChevronRight, CircleHelp, House, LayoutGrid, LoaderCircle, Menu, Network, Pause, Play, Plus, RefreshCw, Settings2, ShieldCheck, X } from 'lucide-react';
 import { useSSE } from '@/hooks/useSSE';
-import { pauseCleaning, dockVacuum, getAuthStatus, logout, fetchDevices, fetchScenes, executeScene, setNotAtHome, fetchSetupStatus } from '@/lib/api';
+import { fetchDevices, fetchLoxoneIntegration, fetchScenes, fetchSetupStatus, getAuthStatus, testLoxoneCommand } from '@/lib/api';
 import type { SceneInfo } from '@/lib/api';
-import { useTheme } from '@/contexts/ThemeContext';
-import { formatCleanTime, formatCleanArea, formatDisplayName } from '@/types/status';
 import type { DeviceSummary } from '@/types/status';
+import type { LoxoneActivity, LoxoneIntegration } from '@/types/loxone';
 import { LoginPage } from '@/components/LoginPage';
-import { DeviceSwitcher } from '@/components/DeviceSwitcher';
-import { CleaningProgress } from '@/components/CleaningProgress';
-import { VectorMap } from '@/components/VectorMap';
-import { ScheduleSection } from '@/components/ScheduleSection';
-import { ConfirmModal } from '@/components/ConfirmModal';
-import { ControlsPage } from '@/components/ControlsPage';
-import { MaintenancePage } from '@/components/MaintenancePage';
-import { SchedulePage } from '@/components/SchedulePage';
-import { LoxoneIntegrationPage } from '@/components/LoxoneIntegrationPage';
 import { SetupWizard } from '@/components/SetupWizard';
+import { LoxoneIntegrationPage } from '@/components/LoxoneIntegrationPage';
 import { SystemUpdatesPage } from '@/components/SystemUpdatesPage';
-
-const activeCleaningStates = new Set([
-  'cleaning', 'spot_cleaning', 'segment_cleaning', 'zoned_cleaning',
-  'going_to_target', 'returning_home', 'washing_mop', 'emptying_dustbin',
-  'going_to_wash_mop', 'paused',
-]);
+import { ConfirmModal } from '@/components/ConfirmModal';
+import { SchedulePage } from '@/components/SchedulePage';
+import { robotStateLabel, robotNeedsAttention } from '@/lib/presentation';
 
 export function App() {
-  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
-  const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
+  const [ready, setReady] = useState(false);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [setupComplete, setSetupComplete] = useState(false);
+  const [initialError, setInitialError] = useState('');
   const [devices, setDevices] = useState<DeviceSummary[]>([]);
-  const { statuses, scheduleStates, availabilities, loxoneActivities, isConnected, error, reconnect } = useSSE();
-  const { theme, toggleTheme } = useTheme();
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [scenesBySlug, setScenesBySlug] = useState<Record<string, SceneInfo[]>>({});
-  const [activeSceneId, setActiveSceneId] = useState<number | null>(null);
-  const [showLogoutModal, setShowLogoutModal] = useState(false);
-  const [pendingScene, setPendingScene] = useState<SceneInfo | null>(null);
-  const [pendingSceneSlug, setPendingSceneSlug] = useState<string>('');
-  const [globalNotAtHome, setGlobalNotAtHome] = useState(false);
+  const [integration, setIntegration] = useState<LoxoneIntegration | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const live = useSSE();
 
-  useEffect(() => {
-    Promise.all([fetchSetupStatus(), getAuthStatus()])
-      .then(([setup, auth]) => { setSetupComplete(setup.setup_complete); setAuthenticated(auth.authenticated); })
-      .catch(() => { setSetupComplete(false); setAuthenticated(false); });
-  }, []);
-
-  useEffect(() => {
-    if (!authenticated) return;
-    fetchDevices().then(devs => {
-      setDevices(devs);
-      devs.forEach(dev => {
-        fetchScenes(dev.slug).then(scenes => {
-          setScenesBySlug(prev => ({ ...prev, [dev.slug]: scenes }));
-        }).catch(() => {});
-      });
-    }).catch(console.error);
-  }, [authenticated]);
-
-  useEffect(() => {
-    const states = Object.values(scheduleStates);
-    if (states.length > 0) {
-      setGlobalNotAtHome(states[0].not_at_home);
-    }
-  }, [scheduleStates]);
-
-  // Overlay the live SSE connection state onto the fetched device list so the
-  // online/offline indicator reflects cloud-connection drops without a refetch.
-  const liveDevices = useMemo(
-    () => devices.map(d => (d.slug in availabilities ? { ...d, online: availabilities[d.slug] } : d)),
-    [devices, availabilities],
-  );
-
-  const handleAction = async (action: string, fn: () => Promise<void>) => {
-    setActionLoading(action);
+  const initialize = useCallback(async () => {
+    setInitialError('');
     try {
-      await fn();
-    } catch (err) {
-      console.error(`Failed to ${action}:`, err);
-    } finally {
-      setTimeout(() => setActionLoading(null), 500);
+      const [setup, auth] = await Promise.all([fetchSetupStatus(), getAuthStatus()]);
+      setSetupComplete(setup.setup_complete);
+      setAuthenticated(auth.authenticated);
+      setReady(true);
+    } catch {
+      setInitialError('Le bridge ne répond pas pour le moment. Vos réglages sont conservés.');
     }
-  };
+  }, []);
+  useEffect(() => { void initialize(); }, [initialize]);
 
-  const handleLogout = async () => {
-    await logout();
-    setShowLogoutModal(false);
-    setAuthenticated(false);
-  };
-
-  if (authenticated === null || setupComplete === null) {
-    return <div className="min-h-screen bg-background flex items-center justify-center">
-      <div className="text-muted-foreground">Loading...</div>
-    </div>;
-  }
-
-  if (!setupComplete) {
-    return <SetupWizard onComplete={() => { setSetupComplete(true); getAuthStatus().then(s => setAuthenticated(s.authenticated)); }} />;
-  }
-
-  if (!authenticated) {
-    return <LoginPage onLogin={() => setAuthenticated(true)} />;
-  }
-
-  return (
-    <>
-      <Routes>
-        <Route path="/setup" element={<SetupWizard reconfigure onComplete={() => { setSetupComplete(true); window.location.assign('/loxone'); }} />} />
-        <Route path="/loxone" element={<LoxoneIntegrationPage liveActivities={loxoneActivities} liveStatuses={statuses} liveAvailabilities={availabilities} streamConnected={isConnected} />} />
-        <Route path="/system" element={<SystemUpdatesPage returnSlug={devices[0]?.slug} />} />
-        <Route path="/devices/:slug/*" element={
-          <DeviceLayout
-            devices={liveDevices}
-            statuses={statuses}
-            globalNotAtHome={globalNotAtHome}
-            setGlobalNotAtHome={setGlobalNotAtHome}
-            isConnected={isConnected}
-            error={error}
-            reconnect={reconnect}
-            theme={theme}
-            toggleTheme={toggleTheme}
-            onLogout={() => setShowLogoutModal(true)}
-          />
-        }>
-          <Route index element={
-            <DeviceHome
-              devices={liveDevices}
-              statuses={statuses}
-              scheduleStates={scheduleStates}
-              scenesBySlug={scenesBySlug}
-              activeSceneId={activeSceneId}
-              actionLoading={actionLoading}
-              handleAction={handleAction}
-              setPendingScene={setPendingScene}
-              setPendingSceneSlug={setPendingSceneSlug}
-              setActiveSceneId={setActiveSceneId}
-            />
-          } />
-          <Route path="controls" element={
-            <ControlsRoute statuses={statuses} actionLoading={actionLoading} handleAction={handleAction} />
-          } />
-          <Route path="schedule" element={
-            <ScheduleRoute devices={liveDevices} scenesBySlug={scenesBySlug} scheduleStates={scheduleStates} />
-          } />
-          <Route path="maintenance" element={
-            <MaintenanceRoute devices={liveDevices} statuses={statuses} />
-          } />
-        </Route>
-        <Route path="*" element={
-          devices.length > 0 ? <Navigate to={`/devices/${devices[0].slug}`} replace /> : (
-            <div className="min-h-screen bg-background flex items-center justify-center">
-              <div className="text-muted-foreground">Loading devices...</div>
-            </div>
-          )
-        } />
-      </Routes>
-
-      <ConfirmModal
-        open={showLogoutModal}
-        title="Log out"
-        message="You are about to log out from Roborock. You will need to re-authenticate with a verification code sent to your email."
-        confirmLabel="Log out"
-        confirmVariant="destructive"
-        onConfirm={handleLogout}
-        onCancel={() => setShowLogoutModal(false)}
-      />
-
-      <ConfirmModal
-        open={pendingScene !== null}
-        title={`Start "${pendingScene?.name}"?`}
-        message="This will start the cleaning program on the device."
-        confirmLabel="Start"
-        onConfirm={() => {
-          if (pendingScene) {
-            setActiveSceneId(pendingScene.id);
-            handleAction(`scene-${pendingScene.id}`, () => executeScene(pendingSceneSlug, pendingScene.id));
-          }
-          setPendingScene(null);
-        }}
-        onCancel={() => setPendingScene(null)}
-      />
-    </>
-  );
-}
-
-// --- Device Layout (shared header + outlet) ---
-
-import { Outlet } from 'react-router-dom';
-import type { VacuumStatus } from '@/types/status';
-import type { ScheduleState } from '@/types/schedule';
-
-function DeviceLayout({ devices, statuses, globalNotAtHome, setGlobalNotAtHome, isConnected, error, reconnect, theme, toggleTheme, onLogout }: {
-  devices: DeviceSummary[];
-  statuses: Record<string, VacuumStatus>;
-  globalNotAtHome: boolean;
-  setGlobalNotAtHome: (v: boolean) => void;
-  isConnected: boolean;
-  error: string | null;
-  reconnect: () => void;
-  theme: string;
-  toggleTheme: () => void;
-  onLogout: () => void;
-}) {
-  const { slug } = useParams<{ slug: string }>();
-  const navigate = useNavigate();
-
-  return (
-    <div className="min-h-screen bg-background p-4 md:p-8">
-      <div className="max-w-md mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold text-foreground">Roborock</h1>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={async () => {
-                const newVal = !globalNotAtHome;
-                setGlobalNotAtHome(newVal);
-                try { await setNotAtHome(newVal); } catch { setGlobalNotAtHome(!newVal); }
-              }}
-              className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-accent transition-colors"
-              aria-label="Toggle not at home"
-              title={globalNotAtHome ? 'Away from home (click to set at home)' : 'At home (click to set away)'}
-            >
-              <Home className={`h-4 w-4 ${globalNotAtHome ? 'text-gray-500' : 'text-foreground'}`} />
-              <div className={`relative w-8 h-[18px] rounded-full transition-colors ${globalNotAtHome ? 'bg-gray-500' : 'bg-green-500'}`}>
-                <div className={`absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white transition-transform ${globalNotAtHome ? 'left-[2px]' : 'left-[16px]'}`} />
-              </div>
-            </button>
-            <div className="p-2" title={isConnected ? 'Connected' : 'Disconnected'}>
-              {isConnected ? (
-                <Wifi className="h-5 w-5 text-green-500" />
-              ) : (
-                <WifiOff className="h-5 w-5 text-red-500 cursor-pointer" onClick={reconnect} />
-              )}
-            </div>
-            <button onClick={toggleTheme} className="p-2 rounded-lg hover:bg-accent transition-colors" aria-label="Toggle theme">
-              {theme === 'dark' ? <Sun className="h-5 w-5 text-foreground" /> : <Moon className="h-5 w-5 text-foreground" />}
-            </button>
-            <Link to="/setup" className="p-2 rounded-lg hover:bg-accent transition-colors" aria-label="Integration settings" title="Integration settings">
-              <Network className="h-5 w-5 text-foreground" />
-            </Link>
-            <Link to="/system" className="p-2 rounded-lg hover:bg-accent transition-colors" aria-label="System and updates" title="System & Updates">
-              <ServerCog className="h-5 w-5 text-foreground" />
-            </Link>
-            <button onClick={onLogout} className="p-2 rounded-lg hover:bg-accent transition-colors" aria-label="Logout" title="Logout">
-              <LogOut className="h-5 w-5 text-foreground" />
-            </button>
-          </div>
-        </div>
-
-        {error && (
-          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-500 text-sm">
-            {error}
-            <button onClick={reconnect} className="ml-2 underline hover:no-underline">Retry</button>
-          </div>
-        )}
-
-        <DeviceSwitcher devices={devices} statuses={statuses} selected={slug ?? ''} onSelect={(s) => navigate(`/devices/${s}`)} />
-
-        <Outlet />
-
-        <div className="mt-8 text-center text-xs text-muted-foreground">roborock-mqtt-loxone</div>
-      </div>
-    </div>
-  );
-}
-
-// --- Device Home (main view) ---
-
-function DeviceHome({ devices, statuses, scheduleStates, scenesBySlug, activeSceneId, actionLoading, handleAction, setPendingScene, setPendingSceneSlug, setActiveSceneId }: {
-  devices: DeviceSummary[];
-  statuses: Record<string, VacuumStatus>;
-  scheduleStates: Record<string, ScheduleState>;
-  scenesBySlug: Record<string, SceneInfo[]>;
-  activeSceneId: number | null;
-  actionLoading: string | null;
-  handleAction: (action: string, fn: () => Promise<void>) => void;
-  setPendingScene: (s: SceneInfo | null) => void;
-  setPendingSceneSlug: (s: string) => void;
-  setActiveSceneId: (id: number | null) => void;
-}) {
-  const { slug } = useParams<{ slug: string }>();
-  if (!slug) return null;
-
-  const status = statuses[slug];
-  const isEmptyStatus = status ? !status.state : false;
-  const isCleaning = status ? activeCleaningStates.has(status.state) : false;
-  const scenes = scenesBySlug[slug] ?? [];
-  const deviceName = devices.find(d => d.slug === slug)?.name ?? slug;
-
-  // Clear active scene when device stops cleaning
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const [nextDevices, nextIntegration] = await Promise.all([fetchDevices(), fetchLoxoneIntegration()]);
+      setDevices(nextDevices);
+      setIntegration(nextIntegration);
+      setRefreshError('');
+    } catch {
+      setRefreshError('Impossible d’actualiser les robots. Réessayez dans un instant.');
+    } finally { setRefreshing(false); }
+  }, []);
   useEffect(() => {
-    if (!isCleaning) setActiveSceneId(null);
-  }, [isCleaning]);
+    if (!authenticated || !setupComplete) return;
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30000);
+    return () => window.clearInterval(timer);
+  }, [authenticated, setupComplete, refresh]);
 
-  return (
-    <>
-      {/* Status card */}
-      {status && isEmptyStatus ? (
-        <div className="mb-6 p-4 bg-card rounded-lg border border-border">
-          <p className="text-sm text-muted-foreground">Waiting for status...</p>
-        </div>
-      ) : status && activeCleaningStates.has(status.state) ? (
-        <CleaningProgress status={status} scenes={scenes} />
-      ) : status && (
-        <div className="mb-6 p-4 bg-card rounded-lg border border-border">
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-lg font-medium text-foreground">{formatDisplayName(status.state)}</div>
-            {status.error_code > 0 && (
-              <div className="flex items-center gap-1 text-red-500 text-sm">
-                <AlertCircle className="h-4 w-4" />
-                <span>{status.error || `Error ${status.error_code}`}</span>
-              </div>
-            )}
-          </div>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div className="flex items-center gap-2">
-              <Battery className={`h-4 w-4 ${status.battery > 50 ? 'text-green-500' : status.battery > 20 ? 'text-amber-500' : 'text-red-500'}`} />
-              <span className="text-muted-foreground tabular-nums">{status.battery}%</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Wind className="h-4 w-4 text-foreground" />
-              <span className="text-muted-foreground">{formatDisplayName(status.fan_speed)}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Droplets className="h-4 w-4 text-foreground" />
-              <span className="text-muted-foreground">{formatDisplayName(status.mop_mode)}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Clock className="h-4 w-4 text-foreground" />
-              <span className="text-muted-foreground tabular-nums">{formatCleanTime(status.clean_time)}</span>
-            </div>
-            {status.clean_area > 0 && (
-              <div className="flex items-center gap-2">
-                <MapPin className="h-4 w-4 text-foreground" />
-                <span className="text-muted-foreground tabular-nums">{formatCleanArea(status.clean_area)}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+  const robots = useMemo(() => devices.map(device => ({ ...device, online: live.availabilities[device.slug] ?? device.online, status: live.statuses[device.slug] ?? device.status })), [devices, live.availabilities, live.statuses]);
+  if (!ready) return <div className="flex min-h-screen items-center justify-center p-6"><div className="max-w-md text-center"><BridgeMark /><p className="mt-5 text-sm text-muted-foreground">{initialError || 'Connexion à votre passerelle…'}</p>{initialError ? <button className="bridge-button-secondary mt-4" onClick={() => void initialize()}>Réessayer</button> : <LoaderCircle className="mx-auto mt-4 h-5 w-5 animate-spin text-primary" />}</div></div>;
+  if (!setupComplete) return <SetupWizard onComplete={() => void initialize()} />;
+  if (!authenticated) return <LoginPage onLogin={() => { setAuthenticated(true); void refresh(); }} />;
 
-      {/* Inline Pause/Dock during cleaning */}
-      {isCleaning && (
-        <div className="mb-6 grid grid-cols-2 gap-3">
-          <button onClick={() => handleAction('pause', () => pauseCleaning(slug))} disabled={actionLoading === 'pause'} className="p-3 rounded-lg border border-border bg-card hover:bg-accent transition-colors touch-target flex items-center justify-center gap-2">
-            <Pause className="h-5 w-5 text-amber-500" /><span className="text-sm text-muted-foreground">Pause</span>
-          </button>
-          <button onClick={() => handleAction('dock', () => dockVacuum(slug))} disabled={actionLoading === 'dock'} className="p-3 rounded-lg border border-border bg-card hover:bg-accent transition-colors touch-target flex items-center justify-center gap-2">
-            <Home className="h-5 w-5 text-primary" /><span className="text-sm text-muted-foreground">Dock</span>
-          </button>
-        </div>
-      )}
-
-      {/* Programs */}
-      {scenes.length > 0 && (
-        <div className="mb-6">
-          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-3">Programs</h2>
-          <div className="space-y-2">
-            {scenes.map((scene) => (
-              <button
-                key={scene.id}
-                onClick={() => { setPendingScene(scene); setPendingSceneSlug(slug); }}
-                disabled={actionLoading?.startsWith('scene-') ?? false}
-                className={`w-full p-3 rounded-lg border-2 transition-all touch-target flex items-center justify-between ${
-                  activeSceneId === scene.id && isCleaning ? 'border-primary bg-primary/10' : 'border-border bg-card hover:bg-accent'
-                }`}
-              >
-                <span className="flex flex-col items-start min-w-0">
-                  <span className={`text-sm truncate ${activeSceneId === scene.id && isCleaning ? 'text-primary font-medium' : 'text-foreground'}`}>{scene.name}</span>
-                  {scene.recorded_minutes != null && (
-                    <span className="text-xs text-muted-foreground tabular-nums">~{scene.recorded_minutes} min</span>
-                  )}
-                </span>
-                {activeSceneId === scene.id && isCleaning
-                  ? <span className="text-xs uppercase tracking-wide bg-primary text-primary-foreground px-2 py-0.5 rounded">Active</span>
-                  : <Play className="h-4 w-4 text-green-500 shrink-0" />
-                }
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Controls summary */}
-      {status && !isEmptyStatus && (
-        <div className="mb-6">
-          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-3">Controls</h2>
-          <Link to={`/devices/${slug}/controls`} className="block w-full p-4 bg-card rounded-lg border border-border hover:bg-accent transition-colors text-left">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                <div className="flex items-center gap-1.5"><Wind className="h-4 w-4" /><span>{formatDisplayName(status.fan_speed)}</span></div>
-                <div className="flex items-center gap-1.5"><Droplets className="h-4 w-4" /><span>{formatDisplayName(status.mop_mode)}</span></div>
-              </div>
-              <ChevronRight className="h-4 w-4 text-muted-foreground" />
-            </div>
-          </Link>
-        </div>
-      )}
-
-      {/* Maintenance summary */}
-      {status && !isEmptyStatus && status.consumable_percents && (
-        <div className="mb-6">
-          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-3">Maintenance</h2>
-          <Link
-            to={`/devices/${slug}/maintenance`}
-            className={`block w-full p-4 bg-card rounded-lg border hover:bg-accent transition-colors text-left ${
-              Math.min(status.consumable_percents.main_brush, status.consumable_percents.side_brush, status.consumable_percents.filter, status.consumable_percents.sensor, status.consumable_percents.dust_collection) <= 20
-                ? 'border-red-500/30' : 'border-border'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3 text-sm">
-                <Wrench className="h-4 w-4 text-muted-foreground" />
-                {(() => {
-                  const p = status.consumable_percents;
-                  const worst = Math.min(p.main_brush, p.side_brush, p.filter, p.sensor, p.dust_collection);
-                  const worstName = worst === p.main_brush ? 'Main Brush' : worst === p.side_brush ? 'Side Brush' : worst === p.filter ? 'Filter' : worst === p.sensor ? 'Sensor' : 'Dust Collection';
-                  if (worst > 50) return <span className="text-green-500">All good</span>;
-                  if (worst > 20) return <span className="text-amber-500">{worstName}: {worst}%</span>;
-                  return <span className="text-red-500">{worstName}: {worst}%</span>;
-                })()}
-              </div>
-              <ChevronRight className="h-4 w-4 text-muted-foreground" />
-            </div>
-          </Link>
-        </div>
-      )}
-
-      {/* Schedule */}
-      <ScheduleSection
-        slug={slug}
-        deviceName={deviceName}
-        scenes={scenes}
-        sseScheduleState={scheduleStates[slug]}
-      />
-
-      {/* Loxone integration */}
-      <div className="mb-6">
-        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-3">Integration</h2>
-        <Link to="/loxone" className="block w-full p-4 bg-card rounded-lg border border-border hover:bg-accent transition-colors text-left">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 text-sm"><Network className="h-4 w-4 text-primary" /><span>Loxone Integration</span></div>
-            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-          </div>
-        </Link>
-        <Link to="/system" className="mt-2 block w-full p-4 bg-card rounded-lg border border-border hover:bg-accent transition-colors text-left">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 text-sm"><ServerCog className="h-4 w-4 text-primary" /><span>System & Updates</span></div>
-            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-          </div>
-        </Link>
-      </div>
-
-      {/* Map */}
-      <VectorMap slug={slug} isCleaning={status?.in_cleaning ?? false} />
-    </>
-  );
+  const navigation = [{ to: '/', label: 'Mes robots', icon: LayoutGrid }, { to: '/loxone', label: 'Loxone', icon: Network }, { to: '/system', label: 'Mises à jour', icon: ArrowDownToLine }];
+  return <div className="bridge-app min-h-screen">
+    <aside className={`bridge-sidebar ${menuOpen ? 'is-open' : ''}`}>
+      <Link to="/" onClick={() => setMenuOpen(false)} className="flex items-center gap-3 px-2"><BridgeMark /><div><strong className="block text-[17px] tracking-tight">Roborock <span className="font-normal text-muted-foreground">Bridge</span></strong><span className="text-[11px] tracking-[.12em] text-muted-foreground">POUR LOXONE</span></div></Link>
+      <div className="mt-12 px-3 text-[10px] font-semibold uppercase tracking-[.16em] text-muted-foreground">Votre installation</div>
+      <nav className="mt-3 space-y-1.5" aria-label="Navigation principale">{navigation.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} onClick={() => setMenuOpen(false)} className={({ isActive }) => `bridge-nav ${isActive ? 'is-active' : ''}`}><Icon className="h-[19px] w-[19px]" />{label}<ChevronRight className="ml-auto h-4 w-4 opacity-40" /></NavLink>)}</nav>
+      <div className="mt-8 rounded-2xl bg-[#f0f5f2] p-4"><div className="flex items-center gap-2 text-xs font-semibold"><span className={`h-2 w-2 rounded-full ${live.isConnected ? 'bg-emerald-500' : 'bg-amber-500'}`} />{live.isConnected ? 'Bridge connecté' : 'Reconnexion en cours'}</div><p className="mt-2 text-xs leading-relaxed text-muted-foreground">{robots.length} robot{robots.length > 1 ? 's' : ''} · {integration?.direct_enabled ? 'Connexion directe Loxone' : integration?.enabled ? 'Connexion MQTT Loxone' : 'Connexion à configurer'}</p></div>
+      <div className="mt-auto space-y-1 pt-12"><NavLink to="/setup" onClick={() => setMenuOpen(false)} className={({ isActive }) => `bridge-nav ${isActive ? 'is-active' : ''}`}><Settings2 className="h-[18px] w-[18px]" />Réglages</NavLink><Link to="/loxone" onClick={() => setMenuOpen(false)} className="bridge-nav"><CircleHelp className="h-[18px] w-[18px]" />Guide de connexion</Link><div className="px-3 pt-5 text-[10px] leading-5 text-muted-foreground">Roborock → Loxone<br />Basé sur mqtt-home/roborock-mqtt</div></div>
+    </aside>
+    {menuOpen && <button className="fixed inset-0 z-30 bg-black/25 lg:hidden" aria-label="Fermer le menu" onClick={() => setMenuOpen(false)} />}
+    <div className="bridge-main">
+      <header className="bridge-topbar"><div className="flex items-center gap-3"><button className="bridge-icon-button lg:hidden" aria-label={menuOpen ? 'Fermer le menu' : 'Ouvrir le menu'} onClick={() => setMenuOpen(value => !value)}>{menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}</button><span className="text-xs text-muted-foreground">Espace maison <span className="mx-2 opacity-40">/</span><span className="font-medium text-foreground">Passerelle Loxone</span></span></div><span className="inline-flex items-center gap-2 text-xs text-muted-foreground"><span className={`h-1.5 w-1.5 rounded-full ${live.isConnected ? 'bg-emerald-500' : 'bg-amber-500'}`} />{live.isConnected ? 'En direct' : 'Reconnexion'}</span></header>
+      <main id="main-content" className="bridge-content">
+        {(refreshError || (!live.isConnected && live.error)) && <div role="status" className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><span>{refreshError || 'La connexion en direct est interrompue. Les états affichés peuvent être anciens.'}</span><button className="font-semibold underline" onClick={() => { live.reconnect(); void refresh(); }}>Reconnecter</button></div>}
+        <Routes>
+          <Route path="/" element={<FleetHome robots={robots} integration={integration} refreshing={refreshing} refresh={refresh} connected={live.isConnected} />} />
+          <Route path="/devices/:slug/*" element={<RobotWorkspace robots={robots} integration={integration} activities={live.loxoneActivities} refresh={refresh} />} />
+          <Route path="/loxone" element={<LoxoneIntegrationPage liveActivities={live.loxoneActivities} liveStatuses={live.statuses} liveAvailabilities={live.availabilities} streamConnected={live.isConnected} />} />
+          <Route path="/system" element={<SystemUpdatesPage />} />
+          <Route path="/setup" element={<SetupWizard reconfigure onComplete={() => { void initialize(); void refresh(); }} />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </main>
+    </div>
+  </div>;
 }
 
-// --- Route wrappers for sub-pages ---
+function BridgeMark() { return <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-[#173d2b] text-white shadow-sm"><Network className="h-[23px] w-[23px]" strokeWidth={1.6} /></span>; }
 
-function ControlsRoute({ statuses, actionLoading, handleAction }: {
-  statuses: Record<string, VacuumStatus>;
-  actionLoading: string | null;
-  handleAction: (action: string, fn: () => Promise<void>) => void;
-}) {
+function FleetHome({ robots, integration, refreshing, refresh, connected }: { robots: DeviceSummary[]; integration: LoxoneIntegration | null; refreshing: boolean; refresh: () => Promise<void>; connected: boolean }) {
+  const errors = robots.filter(robot => robotNeedsAttention(robot.status));
+  const directSuccess = integration?.direct_diagnostics?.last_transmission;
+  const loxoneReady = Boolean(integration?.direct_enabled ? directSuccess && Date.parse(directSuccess) > 0 && !integration.direct_diagnostics?.last_error : integration?.enabled && integration.mqtt_test?.ok);
+  return <div className="space-y-8">
+    <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="bridge-eyebrow">Votre passerelle, tout simplement</p><h1 className="bridge-title">Mes robots<span className="text-primary">.</span></h1><p className="bridge-description">Vos Roborock, réunis et prêts pour Loxone.</p></div><div className="flex gap-2"><button className="bridge-icon-button" onClick={() => void refresh()} aria-label="Actualiser les robots" disabled={refreshing}><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} /></button><Link className="bridge-button-primary" to="/setup?section=robots"><Plus className="h-4 w-4" />Ajouter un robot</Link></div></div>
+    <section className="bridge-hero"><div className="relative z-10"><span className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-[11px] font-medium text-emerald-100"><span className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-emerald-300' : 'bg-amber-300'}`} />{connected ? 'Votre passerelle est en ligne' : 'Connexion en cours'}</span><h2 className="mt-5 max-w-sm text-[28px] font-semibold leading-[1.2] tracking-tight sm:text-[34px]">La maison s’occupe<br />du reste.</h2><p className="mt-3 max-w-sm text-sm leading-6 text-emerald-100/75">Gardez vos automatismes dans Loxone.<br />Le bridge fait le lien avec vos robots.</p><Link to="/loxone" className="mt-6 inline-flex items-center gap-2 text-sm font-medium text-white">Voir ma connexion Loxone <ArrowRight className="h-4 w-4" /></Link></div><div className="bridge-hero-art" aria-hidden="true"><div className="bridge-orbit orbit-one" /><div className="bridge-orbit orbit-two" /><div className="bridge-orbit orbit-three" /><div className="hero-robot"><RobotDrawing /><span className="hero-mini-badge"><Check className="h-4 w-4" /></span></div><span className="hero-loxone">L<span className="hero-loxone-dot" /></span><span className="hero-flow-dot" /></div></section>
+    <div className="grid gap-3 sm:grid-cols-3"><Metric icon={<Bot className="h-4 w-4" />} title="Robots connectés" value={`${robots.filter(robot => robot.online).length} / ${robots.length}`} note="Sur votre compte Roborock" /><Metric icon={<Network className="h-4 w-4" />} title="Connexion Loxone" value={loxoneReady ? 'Opérationnelle' : integration?.direct_enabled || integration?.enabled ? 'À vérifier' : 'À configurer'} note={integration?.direct_enabled ? 'HTTP direct · sans intermédiaire' : integration?.enabled ? 'Via votre serveur MQTT' : 'Ajoutez votre Miniserver'} good={loxoneReady} /><Metric icon={<ShieldCheck className="h-4 w-4" />} title="À surveiller" value={errors.length ? `${errors.length} robot${errors.length > 1 ? 's' : ''}` : 'Tout est en ordre'} note={errors.length ? 'Consultez les détails ci-dessous' : 'Aucune erreur robot signalée'} good={!errors.length} /></div>
+    <section><div className="mb-4 flex items-center justify-between"><h2 className="text-lg font-semibold tracking-tight">Vos robots <span className="ml-1 text-sm font-normal text-muted-foreground">{robots.length.toString().padStart(2, '0')}</span></h2><span className="text-xs text-muted-foreground">Mise à jour en direct</span></div>{robots.length ? <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">{robots.map(robot => <RobotCard key={robot.slug} robot={robot} integration={integration} />)}<Link to="/setup?section=robots" className="group flex min-h-[290px] flex-col items-center justify-center rounded-[22px] border border-dashed border-[#cfdad2] bg-white/30 p-7 text-center transition hover:border-primary hover:bg-white"><span className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-white text-primary transition group-hover:bg-primary group-hover:text-white"><Plus className="h-5 w-5" /></span><strong className="mt-4 text-sm font-medium">Un autre Roborock ?</strong><span className="mt-2 max-w-[190px] text-xs leading-5 text-muted-foreground">Connectez les robots du même compte, avec leurs propres adresses Loxone.</span></Link></div> : <div className="bridge-card p-10 text-center"><Bot className="mx-auto h-10 w-10 text-primary" /><h3 className="mt-4 font-semibold">Votre premier robot vous attend</h3><p className="mt-2 text-sm text-muted-foreground">Ajoutez votre robot dans Roborock avec le même compte, puis redémarrez le conteneur du bridge sur votre Synology.</p><button className="bridge-button-primary mt-5" onClick={() => void refresh()}>Rechercher mes robots</button></div>}</section>
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-white/60 px-5 py-4"><div className="flex items-center gap-3"><ShieldCheck className="h-5 w-5 text-primary" /><p className="text-xs text-muted-foreground">Vos adresses et entrées Loxone restent les mêmes, y compris après une mise à jour.</p></div><Link to="/system" className="inline-flex items-center gap-1 text-xs font-semibold text-primary">Mises à jour <ArrowUpRight className="h-3.5 w-3.5" /></Link></div>
+  </div>;
+}
+
+function Metric({ icon, title, value, note, good }: { icon: React.ReactNode; title: string; value: string; note: string; good?: boolean }) { return <div className="bridge-card px-5 py-4"><div className="flex items-center gap-2 text-xs text-muted-foreground">{icon}{title}</div><p className={`mt-3 text-lg font-semibold tracking-tight ${good ? 'text-[#247449]' : ''}`}>{value}</p><p className="mt-1 text-[11px] text-muted-foreground">{note}</p></div>; }
+
+function RobotCard({ robot, integration }: { robot: DeviceSummary; integration: LoxoneIntegration | null }) {
+  const connection = integration?.robots.find(item => item.slug === robot.slug);
+  const needsAttention = robotNeedsAttention(robot.status);
+  const dockError = robot.status?.dock_error_status;
+  return <Link to={`/devices/${robot.slug}`} className="bridge-card group block overflow-hidden p-5 transition hover:-translate-y-1 hover:border-primary/30 hover:shadow-lg hover:shadow-emerald-950/5"><div className="flex items-center justify-between"><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium ${!robot.online ? 'bg-slate-100 text-slate-500' : needsAttention ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}><span className="h-1.5 w-1.5 rounded-full bg-current" />{!robot.online ? 'Hors ligne' : needsAttention ? 'À vérifier' : robotStateLabel(robot.status?.state)}</span><ArrowUpRight className="h-4 w-4 text-muted-foreground transition group-hover:text-primary" /></div><div className="flex h-[142px] items-center justify-center"><div className="w-[112px]"><RobotDrawing /></div></div><h3 className="truncate text-base font-semibold tracking-tight">{robot.name}</h3><p className="mt-1 truncate text-[11px] text-muted-foreground">{robot.model}</p>{needsAttention && <p className="mt-2 text-xs text-amber-700">{robot.status?.error || (dockError ? `La station signale une erreur (${dockError}).` : `Erreur robot ${robot.status?.error_code}`)}</p>}<div className="mt-4 flex items-center justify-between border-t border-border pt-4 text-xs"><span className="inline-flex items-center gap-1.5 text-muted-foreground"><Battery className="h-4 w-4" />{robot.status ? `${robot.status.battery} %` : '—'}</span><span className={`inline-flex items-center gap-1.5 ${connection?.direct_enabled || connection?.mqtt_enabled ? 'text-primary' : 'text-muted-foreground'}`}><Network className="h-3.5 w-3.5" />{connection?.direct_enabled || connection?.mqtt_enabled ? 'Relié à Loxone' : 'Loxone à configurer'}</span></div></Link>;
+}
+
+function RobotWorkspace({ robots, integration, activities, refresh }: { robots: DeviceSummary[]; integration: LoxoneIntegration | null; activities: Record<string, LoxoneActivity>; refresh: () => Promise<void> }) {
   const { slug } = useParams<{ slug: string }>();
-  const navigate = useNavigate();
-  if (!slug) return null;
-  return <ControlsPage slug={slug} status={statuses[slug]} actionLoading={actionLoading} onAction={handleAction} onClose={() => navigate(`/devices/${slug}`)} />;
+  const robot = robots.find(item => item.slug === slug);
+  const [scenes, setScenes] = useState<SceneInfo[]>([]);
+  const [busy, setBusy] = useState('');
+  const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(null);
+  const [pending, setPending] = useState<{ command: string; name: string } | null>(null);
+  useEffect(() => { setScenes([]); if (slug) fetchScenes(slug).then(setScenes).catch(() => {}); }, [slug]);
+  const run = async (command: string) => {
+    if (!slug) return;
+    setBusy(command); setNotice(null);
+    try { await testLoxoneCommand(slug, command); setNotice({ error: false, text: 'Commande transmise au robot. Son état se mettra à jour après confirmation.' }); void refresh(); }
+    catch (error) { setNotice({ error: true, text: error instanceof Error ? error.message : 'La commande n’a pas pu être envoyée.' }); }
+    finally { setBusy(''); }
+  };
+  if (!robot) return <div className="bridge-card p-10 text-center"><Bot className="mx-auto h-8 w-8 text-primary" /><h1 className="mt-4 text-xl font-semibold">Robot indisponible</h1><p className="mt-2 text-sm text-muted-foreground">Actualisez la liste ou vérifiez votre connexion Roborock.</p><Link className="bridge-button-secondary mt-5" to="/">Mes robots</Link></div>;
+  const current = integration?.robots.find(item => item.slug === slug);
+  const latest = activities[robot.slug] ?? current?.diagnostics.last_activity;
+  return <div className="space-y-6"><Link to="/" className="inline-flex items-center gap-2 text-xs text-muted-foreground">Mes robots <ChevronRight className="h-3 w-3" />{robot.name}</Link><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="bridge-eyebrow">Votre robot</p><h1 className="bridge-title">{robot.name}</h1><p className="bridge-description">{robot.model}</p></div><Link to={`/loxone?robot=${encodeURIComponent(robot.slug)}`} className="bridge-button-secondary"><Network className="h-4 w-4" />Connexion Loxone <ArrowUpRight className="h-4 w-4" /></Link></div><div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]"><section className="bridge-card p-7"><div className="mx-auto my-4 w-[180px]"><RobotDrawing /></div><div className="mt-6 flex items-center justify-between"><span className="rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-medium text-primary">{robot.online ? robotStateLabel(robot.status?.state) : 'Hors ligne'}</span><span className="inline-flex items-center gap-2 text-sm"><Battery className="h-4 w-4 text-muted-foreground" />{robot.status ? `${robot.status.battery} %` : '—'}</span></div>{robotNeedsAttention(robot.status) && <div role="status" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{robot.status?.error || `Erreur signalée. Consultez l’application Roborock pour le détail.`}</div>}<div className="mt-6 grid grid-cols-3 gap-2">{[{ command: 'start', name: 'Démarrer', icon: Play }, { command: 'pause', name: 'Pause', icon: Pause }, { command: 'dock', name: 'Station', icon: House }].map(({ command, name, icon: Icon }) => <button key={command} disabled={Boolean(busy) || !robot.online} onClick={() => command === 'start' ? setPending({ command, name }) : void run(command)} className={command === 'start' ? 'bridge-button-primary flex-col gap-2 py-4' : 'bridge-button-secondary flex-col gap-2 py-4'}>{busy === command ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}<span className="text-xs">{name}</span></button>)}</div>{notice && <p role={notice.error ? 'alert' : 'status'} className={`mt-4 text-xs leading-5 ${notice.error ? 'text-red-600' : 'text-primary'}`}>{notice.text}</p>}</section><section className="bridge-card p-6"><div className="flex items-center justify-between"><h2 className="text-lg font-semibold">Programmes Roborock</h2><span className="text-xs text-muted-foreground">{scenes.length} disponible{scenes.length > 1 ? 's' : ''}</span></div><p className="mt-2 text-xs leading-5 text-muted-foreground">Vos routines créées dans l’application Roborock, disponibles aussi depuis Loxone.</p><div className="mt-5 space-y-2">{scenes.length ? scenes.map(scene => <button key={scene.id} disabled={Boolean(busy) || !robot.online} onClick={() => setPending({ command: `scene_id:${scene.id}`, name: scene.name })} className="group flex w-full items-center gap-3 rounded-xl border border-border px-4 py-3.5 text-left transition hover:border-primary/40 hover:bg-emerald-50/40 disabled:opacity-50"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#f0f5f2] text-primary"><Play className="h-3.5 w-3.5" /></span><span className="flex-1 text-sm font-medium">{scene.name}</span><ArrowUpRight className="h-4 w-4 text-muted-foreground" /></button>) : <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Créez une routine dans Roborock pour la retrouver ici.</div>}</div>{latest && <div className="mt-6 border-t border-border pt-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Dernier retour du robot</p><p className="mt-2 text-xs">{latest.type === 'command' ? `${latest.command} · ${latest.state}` : robotStateLabel(latest.event)}{latest.error_text && ` · ${latest.error_text}`}</p></div>}</section></div><details className="bridge-card p-5"><summary className="cursor-pointer text-sm font-medium">Informations techniques et anciens plannings</summary><div className="mt-4 space-y-3 text-xs text-muted-foreground"><p>Identifiant permanent : <code className="break-all">{robot.slug}</code></p><p>Les anciens plannings du bridge restent conservés. Gérez les nouveaux automatismes dans Loxone.</p><Routes><Route path="schedule" element={<SchedulePage slug={robot.slug} deviceName={robot.name} scenes={scenes} onClose={() => window.history.back()} />} /><Route path="*" element={<Link className="inline-flex items-center gap-1 font-medium text-primary" to={`/devices/${robot.slug}/schedule`}>Consulter les anciens plannings <ArrowRight className="h-3 w-3" /></Link>} /></Routes></div></details><ConfirmModal open={pending !== null} title={`Lancer « ${pending?.name ?? ''} » ?`} message={`Le programme sera envoyé à ${robot.name}.`} confirmLabel="Lancer le programme" onCancel={() => setPending(null)} onConfirm={() => { if (pending) void run(pending.command); setPending(null); }} /></div>;
 }
 
-function ScheduleRoute({ devices, scenesBySlug, scheduleStates }: {
-  devices: DeviceSummary[];
-  scenesBySlug: Record<string, SceneInfo[]>;
-  scheduleStates: Record<string, ScheduleState>;
-}) {
-  const { slug } = useParams<{ slug: string }>();
-  const navigate = useNavigate();
-  if (!slug) return null;
-  const deviceName = devices.find(d => d.slug === slug)?.name ?? slug;
-  return <SchedulePage slug={slug} deviceName={deviceName} scenes={scenesBySlug[slug] ?? []} sseScheduleState={scheduleStates[slug]} onClose={() => navigate(`/devices/${slug}`)} />;
-}
-
-function MaintenanceRoute({ devices, statuses }: {
-  devices: DeviceSummary[];
-  statuses: Record<string, VacuumStatus>;
-}) {
-  const { slug } = useParams<{ slug: string }>();
-  const navigate = useNavigate();
-  if (!slug) return null;
-  const status = statuses[slug];
-  if (!status) return null;
-  const deviceName = devices.find(d => d.slug === slug)?.name ?? slug;
-  return <MaintenancePage slug={slug} deviceName={deviceName} percents={status.consumable_percents} consumables={status.consumables} onClose={() => navigate(`/devices/${slug}`)} />;
-}
+function RobotDrawing() { return <svg viewBox="0 0 200 200" className="w-full drop-shadow-[0_14px_12px_rgba(24,49,36,0.12)]" aria-hidden="true"><defs><linearGradient id="robot-body" x1="0" y1="0" x2="1" y2="1"><stop stopColor="#fff" /><stop offset="1" stopColor="#dce3de" /></linearGradient></defs><circle cx="100" cy="101" r="83" fill="#d1d9d3" /><circle cx="100" cy="97" r="82" fill="url(#robot-body)" stroke="#c9d2cc" /><circle cx="100" cy="97" r="74" fill="none" stroke="#e1e7e3" /><path d="M43 145h114" stroke="#c5cec7" /><circle cx="100" cy="72" r="27" fill="#e4e9e5" stroke="#c8d1ca" /><circle cx="100" cy="70" r="23" fill="#f8faf8" stroke="#d4ddd6" /><circle cx="100" cy="70" r="14" fill="#d8e0d9" /><circle cx="100" cy="70" r="10" fill="#ecf1ec" /><rect x="87" y="118" width="26" height="10" rx="5" fill="#d5dfd7" /><circle cx="95" cy="123" r="2" fill="#4f8b62" /><circle cx="105" cy="123" r="2" fill="#a9b6ad" /><text x="100" y="154" textAnchor="middle" fill="#89998c" fontFamily="Arial,sans-serif" fontSize="8" letterSpacing="1.5">roborock</text></svg>; }

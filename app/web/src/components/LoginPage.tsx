@@ -48,21 +48,21 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-foreground mb-2">Roborock</h1>
-          <p className="text-sm text-muted-foreground">Sign in to connect your vacuum</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground mb-2">Roborock Bridge</h1>
+          <p className="text-sm text-muted-foreground">Reconnectez votre compte pour retrouver vos robots.</p>
         </div>
 
-        <div className="bg-card rounded-lg border border-border p-6">
+        <div className="bridge-card p-7">
           {step === 'success' ? (
             <div className="text-center py-4">
               <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-3" />
-              <p className="text-foreground font-medium">Connected!</p>
-              <p className="text-sm text-muted-foreground mt-1">Starting bridge...</p>
+              <p className="text-foreground font-medium">Vos robots sont connectés.</p>
+              <p className="text-sm text-muted-foreground mt-1">Ouverture de votre passerelle…</p>
             </div>
           ) : step === 'initial' ? (
             <>
               <p className="text-sm text-muted-foreground mb-4">
-                A verification code will be sent to your Roborock account email.
+                Recevez un code de connexion à l’adresse e-mail de votre compte Roborock. Vos réglages Loxone sont conservés.
               </p>
               <button
                 onClick={handleRequestCode}
@@ -74,13 +74,13 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                 ) : (
                   <Mail className="h-5 w-5" />
                 )}
-                {loading ? 'Sending...' : 'Send Verification Code'}
+                {loading ? 'Envoi en cours…' : 'Recevoir mon code'}
               </button>
             </>
           ) : (
             <>
               <p className="text-sm text-muted-foreground mb-4">
-                Enter the verification code sent to your email.
+                Saisissez le code reçu par e-mail.
               </p>
               <div className="flex gap-2 mb-4">
                 <div className="relative flex-1">
@@ -91,7 +91,9 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                     value={code}
                     onChange={(e) => setCode(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-                    placeholder="Enter code"
+                    placeholder="Code de connexion"
+                    aria-label="Code de connexion Roborock"
+                    autoComplete="one-time-code"
                     autoFocus
                     className="w-full pl-10 pr-3 py-3 rounded-lg border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   />
@@ -105,7 +107,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                 {loading ? (
                   <Loader2 className="h-5 w-5 animate-spin" />
                 ) : (
-                  'Sign In'
+                  'Connecter mes robots'
                 )}
               </button>
               <button
@@ -113,20 +115,20 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                 disabled={loading}
                 className="w-full mt-2 p-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
               >
-                Resend code
+                Renvoyer le code
               </button>
             </>
           )}
 
           {error && (
-            <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-500 text-sm">
+            <div role="alert" className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-500 text-sm">
               {error}
             </div>
           )}
         </div>
 
         <div className="mt-6 text-center text-xs text-muted-foreground">
-          roborock-mqtt-loxone
+          Votre passerelle Roborock → Loxone
         </div>
       </div>
     </div>

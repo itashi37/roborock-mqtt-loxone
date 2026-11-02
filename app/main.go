@@ -348,6 +348,20 @@ func loxoneMQTTEnabledFor(slug string) bool {
 	return localMQTTEnabledFor(slug) && config.Get().Loxone.Enabled
 }
 
+func publishLoxoneWebCommand(slug, command string) error {
+	if !loxoneMQTTEnabledFor(slug) && !directLoxoneEnabledFor(slug) {
+		return fmt.Errorf("Loxone is disabled for this robot")
+	}
+	if commandCoordinator == nil {
+		return fmt.Errorf("command coordinator is not ready")
+	}
+	result := commandCoordinator.SubmitText(slug, command)
+	if result.State == "failed" {
+		return fmt.Errorf("%s", result.Error)
+	}
+	return nil
+}
+
 func publishLocalMQTT(topic string, payload any, retained bool) {
 	if err := localBroker.Publish(topic, payload, retained); err != nil {
 		logger.Warn("Local MQTT publish failed", "topic", topic, "error", err)
@@ -630,24 +644,12 @@ func wireLoxoneWeb(restClient *roborock.Client) {
 		return
 	}
 	webServer.SetLoxoneIntegration(&web.LoxoneDependencies{
-		Core:          loxoneCoreStore,
-		Diagnostics:   loxoneDiagnostics,
-		RoomOverrides: loxoneRoomOverrides,
-		Capabilities:  capabilityStore,
-		PublishCommand: func(slug, command string) error {
-			if !config.Get().Loxone.Enabled {
-				return fmt.Errorf("Loxone mode is disabled")
-			}
-			if commandCoordinator == nil {
-				return fmt.Errorf("command coordinator is not ready")
-			}
-			result := commandCoordinator.SubmitText(slug, command)
-			if result.State == "failed" {
-				return fmt.Errorf("%s", result.Error)
-			}
-			return nil
-		},
-		TestMQTT: loxoneProbe.test,
+		Core:           loxoneCoreStore,
+		Diagnostics:    loxoneDiagnostics,
+		RoomOverrides:  loxoneRoomOverrides,
+		Capabilities:   capabilityStore,
+		PublishCommand: publishLoxoneWebCommand,
+		TestMQTT:       loxoneProbe.test,
 		RefreshRoom: func(slug string) {
 			refreshLoxoneCurrentRoom(slug, restClient)
 		},
@@ -1285,6 +1287,22 @@ func startBridge(restClient *roborock.Client) {
 	logger.Info("Bridge started", "devices", len(restClient.GetDevices()))
 }
 
+// restoreBridgeSession refreshes account inventory only before the bridge and
+// its device connections start. Cloud discovery failure keeps cached devices
+// available, while successful discovery includes newly added robots without
+// changing their stable, persisted Loxone slugs.
+func restoreBridgeSession(restClient *roborock.Client) bool {
+	if !restClient.LoadSession() {
+		return false
+	}
+	if err := restClient.DiscoverDevice(); err != nil {
+		logger.Warn("Device discovery failed; keeping saved devices", "error", err)
+	} else if err := restClient.SaveSession(); err != nil {
+		logger.Warn("Failed to save refreshed device inventory", "error", err)
+	}
+	return restClient.IsAuthenticated()
+}
+
 func main() {
 	if len(os.Args) == 3 && os.Args[1] == "--healthcheck" {
 		client := http.Client{Timeout: 5 * time.Second}
@@ -1332,19 +1350,9 @@ func main() {
 	restClient.SetSessionDir(sessionDir)
 
 	// Try to restore a saved session
-	if restClient.LoadSession() {
-		if !restClient.IsAuthenticated() {
-			logger.Info("Saved session found but no devices, discovering...")
-			if err := restClient.DiscoverDevice(); err != nil {
-				logger.Warn("Device discovery failed, will retry via web UI", "error", err)
-			} else {
-				_ = restClient.SaveSession()
-			}
-		}
-		if restClient.IsAuthenticated() {
-			logger.Info("Using saved session, starting bridge...")
-			startBridge(restClient)
-		}
+	if restoreBridgeSession(restClient) {
+		logger.Info("Using saved session, starting bridge...")
+		startBridge(restClient)
 	} else {
 		logger.Info("No saved session. Waiting for authentication via web UI...")
 	}

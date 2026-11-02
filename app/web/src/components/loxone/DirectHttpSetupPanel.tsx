@@ -1,111 +1,110 @@
-import { ChevronDown, CircleHelp, KeyRound, Link2, Network, ShieldCheck } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Check, ChevronDown, KeyRound, Link2, Search, ShieldCheck } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { directCommandURL, directConnectorAddress, normalizeBridgeAddress, suggestedLoxoneInputLabel } from '@/lib/loxone';
 import type { LoxoneDirectInput, LoxoneDirectOutput, LoxoneRobot } from '@/types/loxone';
 import { CopyButton, EmptyState, StatusBadge } from './LoxoneUI';
 
-interface Props {
-  robot: LoxoneRobot;
-  apiUsername: string;
-  tokenConfigured: boolean;
-}
+interface Props { robot: LoxoneRobot; apiUsername: string; tokenConfigured: boolean }
+type Step = 'connection' | 'inputs' | 'commands';
 
-const inputLabels: Record<string, string> = {
-  online: 'Roborock cloud transport connected', robot_online: 'Robot responding to status polling', running: 'Cleaning mission active (stays on during intermediate dock service)', battery: 'Battery percentage', state: 'Stable numeric state code',
-  state_text: 'Readable robot state', current_room_id: 'Current segment ID', current_room_name: 'Current room name',
-  active_program: 'Current cleaning program type', active_scene_id: 'Current bridge-triggered scene ID', active_scene_name: 'Current bridge-triggered scene name',
-  error_code: 'Roborock error code', error_text: 'Readable error', clean_area: 'Cleaned area in m²',
-  clean_time_seconds: 'Cleaning time in seconds', last_seen: 'Last update as Unix timestamp',
-  main_brush: 'Main brush remaining', side_brush: 'Side brush remaining', filter: 'Filter remaining',
-  sensor: 'Sensors remaining', dock_type: 'Reported dock type', charge_status: 'Charging status',
-  dock_error_status: 'Dock error status', dust_collection_status: 'Auto-empty status',
-  wash_status: 'Mop washing status', dry_status: 'Mop drying status',
+const inputDescriptions: Record<string, string> = {
+  online: 'Connexion au service Roborock', robot_online: 'Le robot répond à la passerelle', running: 'Reste actif pendant toute la mission, y compris les passages intermédiaires à la station',
+  battery: 'Niveau de batterie en %', state: 'État du robot sous forme de code', state_text: 'État du robot en toutes lettres',
+  current_room_id: 'Identifiant de la pièce actuellement nettoyée', current_room_name: 'Nom de la pièce actuelle',
+  active_program: 'Type de nettoyage en cours', active_scene_id: 'Identifiant du programme lancé par la passerelle', active_scene_name: 'Nom du programme actif',
+  error_code: 'Code d’erreur du robot', error_text: 'Détail de l’erreur du robot', clean_area: 'Surface nettoyée en m²', clean_time_seconds: 'Durée du nettoyage en secondes',
+  last_seen: 'Date de dernière réception, au format Unix', main_brush: 'Durée restante de la brosse principale', side_brush: 'Durée restante de la brosse latérale',
+  filter: 'Durée restante du filtre', sensor: 'Durée restante avant entretien des capteurs', dock_type: 'Type de station', charge_status: 'État de la charge',
+  dock_error_status: 'Code d’erreur signalé par la station', dust_collection_status: 'État du vidage automatique', wash_status: 'État du lavage des serpillières', dry_status: 'État du séchage des serpillières',
 };
+const essentialFields = new Set(['running', 'online', 'battery', 'state_text', 'current_room_id', 'current_room_name', 'error_code', 'error_text', 'dock_error_status']);
+const kindLabels = { digital: 'Tout ou rien', analog: 'Numérique', text: 'Texte' };
 
 export function DirectHttpSetupPanel({ robot, apiUsername, tokenConfigured }: Props) {
-  const [bridgeAddress, setBridgeAddress] = useState(() => typeof window === 'undefined' ? 'http://SYNOLOGY-IP:8080' : window.location.origin);
+  const [step, setStep] = useState<Step>('inputs');
+  const [query, setQuery] = useState('');
+  const [showAll, setShowAll] = useState(false);
+  const [bridgeAddress, setBridgeAddress] = useState(() => typeof window === 'undefined' ? 'http://IP-DU-SYNOLOGY:8080' : window.location.origin);
   const [token, setToken] = useState('');
   const address = useMemo(() => {
     try { return { value: normalizeBridgeAddress(bridgeAddress), error: '' }; }
-    catch (error) { return { value: '', error: error instanceof Error ? error.message : 'Invalid bridge address.' }; }
+    catch { return { value: '', error: 'Saisissez une adresse HTTP ou HTTPS valide.' }; }
   }, [bridgeAddress]);
   const tokenReady = token.length >= 32;
   const connectorAddress = address.value ? directConnectorAddress(address.value, apiUsername, tokenReady ? token : '') : '';
-  const connectorPreview = connectorAddress && !tokenReady ? directConnectorAddress(address.value, apiUsername, 'YOUR_API_TOKEN') : connectorAddress;
+  const connectorPreview = connectorAddress && !tokenReady ? directConnectorAddress(address.value, apiUsername, 'VOTRE_JETON_API') : connectorAddress;
   const inputs = robot.direct_inputs ?? [];
   const outputs = robot.direct_outputs ?? [];
+  const visibleInputs = inputs.filter(input => (showAll || query || essentialFields.has(input.field)) && `${input.name} ${input.field} ${inputDescriptions[input.field] ?? ''} ${suggestedLoxoneInputLabel(robot.name, input.field)}`.toLocaleLowerCase('fr').includes(query.toLocaleLowerCase('fr')));
   const standard = outputs.filter(output => ['start', 'pause', 'dock'].includes(output.command));
   const rooms = outputs.filter(output => output.path.includes('/rooms/'));
   const scenes = outputs.filter(output => output.path.includes('/scenes/'));
   const advanced = outputs.filter(output => !standard.includes(output) && !rooms.includes(output) && !scenes.includes(output));
 
-  if (!robot.direct_enabled) return <div className="rounded-xl border border-dashed border-border p-4 text-sm">
-    <div className="flex items-center gap-2 font-medium"><Network className="h-4 w-4" /> Direct HTTP is disabled for this robot</div>
-    <p className="mt-1 text-muted-foreground">Enable Direct Loxone Integration to display the exact Virtual Input names and Virtual Output commands.</p>
-    <Link to="/setup" className="mt-3 inline-flex rounded-lg border border-border px-3 py-2 hover:bg-accent">Open integration settings</Link>
+  if (!robot.direct_enabled) return <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
+    <Link2 className="mb-3 h-6 w-6 text-emerald-700" />
+    <h3 className="font-semibold text-slate-800">La connexion directe n’est pas activée pour ce robot</h3>
+    <p className="mt-2 max-w-xl text-sm leading-relaxed text-slate-500">Activez la connexion Loxone dans les réglages pour retrouver les noms d’entrées et les commandes à copier.</p>
+    <Link to="/setup" className="mt-4 inline-flex min-h-10 items-center rounded-xl bg-emerald-700 px-4 text-sm font-medium text-white hover:bg-emerald-800">Ouvrir les réglages</Link>
   </div>;
 
-  return <details className="group overflow-hidden rounded-xl border border-border bg-background">
-    <summary className="flex cursor-pointer list-none items-center gap-3 p-4 hover:bg-accent/50">
-      <div className="rounded-lg bg-primary/10 p-2 text-primary"><Link2 className="h-5 w-5" /></div>
-      <div className="min-w-0 flex-1"><strong className="block">Ready-to-copy Loxone Config setup</strong><span className="text-xs text-muted-foreground">Exact input names, connector address and HTTP commands for {robot.name}</span></div>
-      <StatusBadge tone="green">Direct</StatusBadge><ChevronDown className="h-5 w-5 text-muted-foreground transition-transform group-open:rotate-180" />
-    </summary>
-    <div className="space-y-5 border-t border-border p-4 md:p-5">
-      <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-4 text-sm">
-        <strong>How it works</strong>
-        <p className="mt-1 text-muted-foreground">Create the inputs once, then create one authenticated Virtual Output connector. The bridge pushes state changes into Loxone; Loxone sends commands back through that connector.</p>
-      </div>
-
-      <SetupStep number="1" title="Virtual Output connector" description="In Loxone Config: Periphery → Virtual Outputs → add a Virtual Output connector.">
-        <div className="grid gap-3 lg:grid-cols-2">
-          <label className="text-sm"><span className="font-medium">Bridge address visible from Loxone</span><input value={bridgeAddress} onChange={event => setBridgeAddress(event.target.value)} className={`mt-1 w-full rounded-lg border bg-card px-3 py-2 font-mono text-sm outline-none focus:ring-2 focus:ring-ring ${address.error ? 'border-red-500' : 'border-border'}`} placeholder="http://192.168.1.20:8080" />{address.error && <span className="mt-1 block text-xs text-red-500">{address.error}</span>}</label>
-          <label className="text-sm"><span className="flex items-center gap-1 font-medium">Command API token <span title="Kept only in this browser tab. It is never sent back to the bridge or stored."><CircleHelp className="h-3.5 w-3.5 text-muted-foreground" /></span></span><input type="password" autoComplete="off" value={token} onChange={event => setToken(event.target.value.trim())} className={`mt-1 w-full rounded-lg border bg-card px-3 py-2 font-mono text-sm outline-none focus:ring-2 focus:ring-ring ${token && !tokenReady ? 'border-amber-500' : 'border-border'}`} placeholder="Paste the one-time token here" /><span className="mt-1 block text-xs text-muted-foreground">Not saved. {tokenConfigured ? 'A token is configured on the bridge.' : 'No token is configured yet.'}</span></label>
-        </div>
-        {!tokenReady && <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200"><KeyRound className="mr-2 inline h-4 w-4" />Paste the token shown when it was generated. If it is lost, rotate it in <Link to="/setup" className="font-medium underline">Modes &amp; settings → Direct HTTP</Link>; rotating invalidates the previous connector password.</div>}
-        <CopyField label="Address" value={connectorPreview} copyEnabled={tokenReady && !address.error} help="Paste this complete authenticated address into the Virtual Output connector’s Address field." />
-        <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground"><StatusBadge tone="blue">Basic authentication</StatusBadge><span>User: <code>{apiUsername}</code></span><span>Protocol: HTTP{address.value.startsWith('https:') ? 'S' : ''}</span></div>
-      </SetupStep>
-
-      <SetupStep number="2" title={`Virtual Inputs (${inputs.length})`} description="Keep the exact input name for HTTP updates. Copy the suggested label into a separate display/description field when available; do not replace the exact name unless you also configure an input override.">
-        {inputs.length === 0 ? <EmptyState>No Direct input plan is available yet. Refresh after the robot has reported its status.</EmptyState> : <details className="rounded-lg border border-border">
-          <summary className="cursor-pointer px-3 py-3 text-sm font-medium">Show the complete input list</summary>
-          <div className="divide-y divide-border border-t border-border">{inputs.map(input => <InputRow key={`${input.field}:${input.name}`} input={input} robotName={robot.name} />)}</div>
-        </details>}
-        <div className="mt-3 grid gap-2 sm:grid-cols-3"><TypeHint kind="digital" text="Virtual Input · digital" /><TypeHint kind="analog" text="Virtual Input · analog" /><TypeHint kind="text" text="Virtual Text Input" /></div>
-      </SetupStep>
-
-      <SetupStep number="3" title={`Virtual Output commands (${outputs.length})`} description="Under the connector above, add one Virtual Output Command for each action you need. Use the path in “Command when ON” and select POST.">
-        <CommandGroup title="Essential controls" outputs={standard} connector={connectorAddress} ready={tokenReady && !address.error} open />
-        <CommandGroup title={`Rooms (${rooms.length})`} outputs={rooms} connector={connectorAddress} ready={tokenReady && !address.error} />
-        <CommandGroup title={`Scenes (${scenes.length})`} outputs={scenes} connector={connectorAddress} ready={tokenReady && !address.error} />
-        <CommandGroup title={`Supported advanced controls (${advanced.length})`} outputs={advanced} connector={connectorAddress} ready={tokenReady && !address.error} />
-      </SetupStep>
-
-      <div className="flex items-start gap-2 rounded-lg bg-muted/60 p-3 text-xs text-muted-foreground"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-green-500" /><span>The token is displayed only in this tab and never included in exports or logs. Prefer HTTPS when available; on HTTP, restrict the command API to the Miniserver CIDR.</span></div>
+  return <div className="space-y-6">
+    <div className="flex items-start gap-3 rounded-xl border border-emerald-100 bg-emerald-50/60 px-4 py-3.5">
+      <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
+      <div><p className="text-sm font-medium text-emerald-900">Vos adresses Loxone sont conservées</p><p className="mt-0.5 text-xs leading-relaxed text-emerald-800/75">Retrouvez ici les noms exacts et les commandes de ce robot. Aucune modification de votre configuration existante n’est nécessaire.</p></div>
     </div>
-  </details>;
+    <div className="flex flex-col gap-1 rounded-xl bg-slate-100 p-1 sm:flex-row" role="tablist" aria-label="Configuration Loxone">
+      {([{ id: 'connection', number: '1', title: 'Connexion', icon: Link2 }, { id: 'inputs', number: '2', title: 'Entrées Loxone', icon: ArrowDownLeft }, { id: 'commands', number: '3', title: 'Commandes', icon: ArrowUpRight }] as const).map(item => <button key={item.id} type="button" role="tab" aria-selected={step === item.id} aria-controls={`loxone-step-${robot.slug}`} onClick={() => setStep(item.id)} className={`flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium transition ${step === item.id ? 'bg-white text-emerald-800 shadow-sm' : 'text-slate-500 hover:bg-white/60 hover:text-slate-800'}`}><span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${step === item.id ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200/70 text-slate-500'}`}>{item.number}</span>{item.title}</button>)}
+    </div>
+    <div id={`loxone-step-${robot.slug}`} role="tabpanel">
+      {step === 'connection' && <div className="space-y-5">
+        <SectionIntro title="Un connecteur pour piloter ce robot" description="Dans Loxone Config, créez une sortie virtuelle avec l’adresse ci-dessous. Les entrées sont mises à jour automatiquement par la passerelle." />
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="block text-sm font-medium text-slate-700">Adresse de la passerelle<input value={bridgeAddress} onChange={event => setBridgeAddress(event.target.value)} className="mt-2 min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 font-mono text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" placeholder="http://192.168.1.20:8080" /><span className={`mt-2 block text-xs font-normal ${address.error ? 'text-rose-600' : 'text-slate-400'}`}>{address.error || 'L’adresse de votre Synology, accessible depuis le Miniserver.'}</span></label>
+          <label className="block text-sm font-medium text-slate-700">Jeton de commande<input type="password" autoComplete="off" value={token} onChange={event => setToken(event.target.value.trim())} className="mt-2 min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 font-mono text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" placeholder="Collez votre jeton pour compléter l’adresse" /><span className="mt-2 flex items-center gap-1.5 text-xs font-normal text-slate-400">{tokenConfigured ? <><Check className="h-3 w-3 text-emerald-600" />Un jeton est déjà configuré.</> : 'Aucun jeton n’est encore configuré.'} Il reste dans cet onglet.</span></label>
+        </div>
+        <CopyField label="Adresse du connecteur de sortie virtuelle" value={connectorPreview} copyEnabled={tokenReady && !address.error} />
+        <details className="rounded-xl border border-slate-200 px-4 py-3"><summary className="cursor-pointer text-xs font-medium text-slate-600">J’ai déjà une connexion fonctionnelle ou j’ai perdu mon jeton</summary><p className="mt-3 text-xs leading-relaxed text-slate-500">Si vos commandes fonctionnent déjà dans Loxone, conservez votre connecteur actuel. Le jeton n’est nécessaire ici que pour reconstruire son adresse. Si vous le remplacez dans les <Link to="/setup" className="font-medium text-emerald-700 underline">réglages</Link>, vous devrez aussi le remplacer dans Loxone Config.</p></details>
+        <div className="flex items-center gap-2 text-xs text-slate-400"><KeyRound className="h-3.5 w-3.5" />Utilisateur : <code className="text-slate-600">{apiUsername}</code> · authentification Basic</div>
+      </div>}
+      {step === 'inputs' && <div className="space-y-5">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between"><SectionIntro title="Les informations reçues dans Loxone" description="Copiez le nom exact dans votre entrée virtuelle. Les libellés ci-dessous vous aident à identifier chaque information." /><StatusBadge tone="green">{inputs.length} entrées disponibles</StatusBadge></div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center"><label className="relative flex-1"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><input aria-label="Rechercher une entrée Loxone" value={query} onChange={event => setQuery(event.target.value)} placeholder="Rechercher une information…" className="min-h-10 w-full rounded-xl border border-slate-200 bg-slate-50/50 pl-9 pr-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-50" /></label><button type="button" onClick={() => setShowAll(value => !value)} className={`min-h-10 rounded-xl border px-3 text-xs font-medium transition ${showAll ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>{showAll ? 'Afficher les essentielles' : 'Afficher toutes les entrées'}</button></div>
+        {visibleInputs.length === 0 ? <EmptyState>{inputs.length ? 'Aucune entrée ne correspond à votre recherche.' : 'Les entrées apparaîtront à la prochaine réception de l’état du robot.'}</EmptyState> : <div className="overflow-hidden rounded-xl border border-slate-200"><div className="hidden grid-cols-[1fr_110px_1.3fr] gap-4 bg-slate-50 px-4 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-400 md:grid"><span>Information</span><span>Type d’entrée</span><span>Nom exact à conserver</span></div><div className="divide-y divide-slate-100">{visibleInputs.map(input => <InputRow key={`${input.field}:${input.name}`} input={input} robotName={robot.name} />)}</div></div>}
+        <p className="text-xs leading-relaxed text-slate-400">Les noms affichés sont ceux fournis par votre configuration actuelle. Pour les entrées de type « Texte », utilisez une entrée texte virtuelle dans Loxone Config.</p>
+      </div>}
+      {step === 'commands' && <div className="space-y-5">
+        <SectionIntro title="Les actions envoyées par Loxone" description="Ajoutez une commande sous votre connecteur de sortie virtuelle. Copiez le chemin dans « Commande lorsque ON » et choisissez la méthode POST." />
+        <CommandGroup title="Les commandes essentielles" outputs={standard} connector={connectorAddress} ready={tokenReady && !address.error} open />
+        <CommandGroup title={`Nettoyer une pièce · ${rooms.length}`} outputs={rooms} connector={connectorAddress} ready={tokenReady && !address.error} />
+        <CommandGroup title={`Lancer un programme · ${scenes.length}`} outputs={scenes} connector={connectorAddress} ready={tokenReady && !address.error} />
+        <CommandGroup title={`Autres commandes disponibles · ${advanced.length}`} outputs={advanced} connector={connectorAddress} ready={tokenReady && !address.error} />
+        {outputs.length === 0 && <EmptyState>Aucune commande n’est encore disponible pour ce robot.</EmptyState>}
+      </div>}
+    </div>
+  </div>;
 }
 
-function SetupStep({ number, title, description, children }: { number: string; title: string; description: string; children: React.ReactNode }) {
-  return <section><div className="mb-3 flex items-start gap-3"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">{number}</span><div><h4 className="font-semibold">{title}</h4><p className="text-xs text-muted-foreground">{description}</p></div></div><div className="md:pl-10">{children}</div></section>;
+function SectionIntro({ title, description }: { title: string; description: string }) {
+  return <div><h3 className="text-base font-semibold tracking-tight text-slate-800">{title}</h3><p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-slate-500">{description}</p></div>;
 }
 
-function CopyField({ label, value, copyEnabled, help }: { label: string; value: string; copyEnabled: boolean; help?: string }) {
-  return <div className="mt-3"><div className="mb-1 flex items-center justify-between gap-2"><span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>{help && <span className="hidden text-xs text-muted-foreground lg:block">{help}</span>}</div><div className="flex min-w-0 gap-2"><code className="min-w-0 flex-1 overflow-x-auto rounded-lg border border-border bg-muted/50 px-3 py-2.5 text-xs whitespace-nowrap">{value || 'Enter a valid bridge address'}</code><CopyButton value={value} disabled={!copyEnabled} label={`Copy ${label}`} /></div>{help && <p className="mt-1 text-xs text-muted-foreground lg:hidden">{help}</p>}</div>;
+function CopyField({ label, value, copyEnabled }: { label: string; value: string; copyEnabled: boolean }) {
+  return <div><p className="mb-2 text-xs font-medium text-slate-500">{label}</p><div className="flex min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/70 p-2 pl-3"><code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-xs text-slate-700">{value || 'Saisissez l’adresse de la passerelle'}</code><CopyButton value={value} disabled={!copyEnabled} label={`Copier : ${label}`} /></div></div>;
 }
 
 function InputRow({ input, robotName }: { input: LoxoneDirectInput; robotName: string }) {
-  const suggestedLabel = suggestedLoxoneInputLabel(robotName, input.field);
-  return <div className="grid gap-3 p-3 sm:grid-cols-[100px_1fr] sm:items-start"><StatusBadge tone={input.kind === 'digital' ? 'green' : input.kind === 'text' ? 'blue' : 'neutral'}>{input.kind}</StatusBadge><div className="min-w-0 space-y-2"><div className="flex min-w-0 items-center gap-2"><div className="min-w-0 flex-1"><span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Exact input name</span><code className="block truncate text-xs font-semibold" title={input.name}>{input.name}</code><span className="text-xs text-muted-foreground">{inputLabels[input.field] ?? input.field}</span></div><CopyButton value={input.name} label={`Copy exact input name ${input.name}`} /></div><div className="flex min-w-0 items-center gap-2 rounded-lg bg-muted/60 px-3 py-2"><div className="min-w-0 flex-1"><span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Suggested label</span><span className="block truncate text-sm font-medium" title={suggestedLabel}>{suggestedLabel}</span></div><CopyButton value={suggestedLabel} label={`Copy suggested label ${suggestedLabel}`} /></div></div></div>;
-}
-
-function TypeHint({ kind, text }: { kind: LoxoneDirectInput['kind']; text: string }) {
-  return <div className="rounded-lg bg-muted/60 px-3 py-2 text-xs"><StatusBadge tone={kind === 'digital' ? 'green' : kind === 'text' ? 'blue' : 'neutral'}>{kind}</StatusBadge><span className="ml-2">{text}</span></div>;
+  const label = suggestedLoxoneInputLabel(robotName, input.field).replace(`${robotName.replace(/^roborock\s+/i, '').trim()} — `, '');
+  return <div className="grid items-center gap-3 bg-white px-4 py-4 md:grid-cols-[1fr_110px_1.3fr]">
+    <div className="min-w-0"><p className="text-sm font-medium text-slate-700">{input.field === 'running' ? 'Robot en fonctionnement' : label}</p><p className="mt-1 text-[11px] leading-relaxed text-slate-400">{inputDescriptions[input.field] ?? input.field}</p></div>
+    <div><StatusBadge tone={input.kind === 'digital' ? 'green' : input.kind === 'text' ? 'blue' : 'neutral'}>{kindLabels[input.kind]}</StatusBadge></div>
+    <div className="flex min-w-0 items-center gap-2"><code className="min-w-0 flex-1 select-all break-all rounded-lg bg-slate-50 px-3 py-2.5 text-[11px] leading-relaxed text-slate-600">{input.name}</code><CopyButton value={input.name} label={`Copier ${input.name}`} /></div>
+  </div>;
 }
 
 function CommandGroup({ title, outputs, connector, ready, open = false }: { title: string; outputs: LoxoneDirectOutput[]; connector: string; ready: boolean; open?: boolean }) {
-  if (outputs.length === 0) return null;
-  return <details open={open} className="mb-2 overflow-hidden rounded-lg border border-border"><summary className="cursor-pointer bg-muted/40 px-3 py-2.5 text-sm font-medium">{title}</summary><div className="divide-y divide-border border-t border-border">{outputs.map(output => <div key={output.path} className="p-3"><div className="flex flex-wrap items-center gap-2"><strong className="text-sm">{output.name}</strong><StatusBadge tone="blue">POST</StatusBadge>{output.level === 'advanced' && <StatusBadge tone="amber">Advanced</StatusBadge>}</div><div className="mt-2 grid gap-2 xl:grid-cols-2"><CopyField label="Command when ON" value={output.path} copyEnabled help="Paste under the Virtual Output Command." /><CopyField label="Full URL" value={connector ? directCommandURL(connector, output.path) : output.path} copyEnabled={ready} help="Useful for checking the complete target." /></div></div>)}</div></details>;
+  if (!outputs.length) return null;
+  const commandLabels: Record<string, string> = { start: 'Démarrer le nettoyage', pause: 'Mettre en pause', dock: 'Retourner à la station' };
+  return <details open={open} className="group overflow-hidden rounded-xl border border-slate-200"><summary className="flex cursor-pointer list-none items-center justify-between gap-3 bg-slate-50/70 px-4 py-3.5 text-sm font-medium text-slate-700">{title}<ChevronDown className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-180" /></summary><div className="divide-y divide-slate-100 border-t border-slate-100">{outputs.map(output => <div key={output.path} className="space-y-2.5 p-4"><div className="flex items-center gap-2"><strong className="text-sm font-medium text-slate-700">{commandLabels[output.command] ?? output.name}</strong><StatusBadge>POST</StatusBadge></div><div className="flex min-w-0 items-center gap-2"><code className="min-w-0 flex-1 select-all break-all rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-600">{output.path}</code><CopyButton value={output.path} label={`Copier la commande ${output.name}`} /></div>{ready && <details className="text-xs text-slate-400"><summary className="cursor-pointer">Adresse complète</summary><div className="mt-2"><CopyField label="URL complète avec authentification" value={directCommandURL(connector, output.path)} copyEnabled /></div></details>}</div>)}</div></details>;
 }
