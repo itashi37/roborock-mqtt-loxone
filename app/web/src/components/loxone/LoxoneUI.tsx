@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 export type Tone = 'green' | 'red' | 'amber' | 'blue' | 'neutral';
 
 const tones: Record<Tone, string> = {
-  green: 'border-emerald-100 bg-emerald-50 text-emerald-700',
+  green: 'border-green-200 bg-green-50 text-green-700',
   red: 'border-rose-100 bg-rose-50 text-rose-700',
   amber: 'border-amber-100 bg-amber-50 text-amber-700',
   blue: 'border-sky-100 bg-sky-50 text-sky-700',
@@ -47,8 +47,8 @@ export function CopyButton({ value, label = 'Copier', disabled = false }: { valu
       window.setTimeout(() => setCopied(false), 1600);
     } catch { setFailed(true); }
   };
-  return <button type="button" onClick={() => void copy()} disabled={disabled} className={`inline-flex min-h-9 min-w-9 shrink-0 items-center justify-center rounded-lg border p-2 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40 ${failed ? 'border-rose-200 text-rose-600' : 'border-slate-200 bg-white text-slate-500'}`} title={failed ? 'Sélectionnez le texte pour le copier manuellement' : copied ? 'Copié !' : label} aria-label={copied ? 'Copié' : label}>
-    {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+  return <button type="button" onClick={() => void copy()} disabled={disabled} className={`inline-flex min-h-9 min-w-9 shrink-0 items-center justify-center rounded-lg border p-2 transition hover:border-blue-300 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40 ${failed ? 'border-rose-200 text-rose-600' : 'border-slate-200 bg-white text-slate-500'}`} title={failed ? 'Sélectionnez le texte pour le copier manuellement' : copied ? 'Copié !' : label} aria-label={copied ? 'Copié' : label}>
+    {copied ? <Check className="h-3.5 w-3.5 text-blue-600" /> : <Copy className="h-3.5 w-3.5" />}
   </button>;
 }
 

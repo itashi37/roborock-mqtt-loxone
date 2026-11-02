@@ -39,5 +39,5 @@ export function AdvancedDiagnosticsPanel({ slug, initialCapabilities, busy, onCo
 }
 
 function AdvancedButton({ icon, label, busy, onClick }: { icon?: React.ReactNode; label: string; busy: boolean; onClick: () => void }) {
-  return <button disabled={busy} onClick={onClick} className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-slate-200 px-3 text-xs text-slate-600 hover:border-emerald-200 hover:bg-emerald-50 disabled:opacity-50">{icon && <span className="h-4 w-4 [&>svg]:h-4 [&>svg]:w-4">{icon}</span>}{label}</button>;
+  return <button disabled={busy} onClick={onClick} className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-slate-200 px-3 text-xs text-slate-600 hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50">{icon && <span className="h-4 w-4 [&>svg]:h-4 [&>svg]:w-4">{icon}</span>}{label}</button>;
 }
